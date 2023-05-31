@@ -14,6 +14,7 @@ import pandas as pd
 import pickle
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+import csv
 
 
 import torch
@@ -50,7 +51,7 @@ from sklearn.metrics import mean_squared_error
 
 import sys
 sys.path.insert(0, '/home/kiessnek/TUHEEG_decoding/code/')
-from torchsampler import ImbalancedDatasetSampler
+from misc import ImbalancedDatasetSampler, ImbalancedDatasetSampler_with_ds
 # from ExtendedAdam import ExtendedAdam
 
 from itertools import product
@@ -332,8 +333,50 @@ def plot_roc_curve(fper, tper, save_name):
     plt.show()
 ####################################
 
+from torch.utils.data import DataLoader, ConcatDataset
+from sklearn.metrics import accuracy_score,balanced_accuracy_score
+from skorch.helper import SliceDataset
 
+def save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt):
+    
+    model = clf.module_
+    n_of_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+    data = [
+    # [seed,dataset, Model, Param, N_of_recordings, b_acc],
+    [seed, model_name ,n_of_params, ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt]
+    ]
+
+    with open('output_all.csv', 'a', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerows(data)
+
+def print_single_ds_performance(clf, test_set):
+    test_set.set_description({
+        "dataset": ['Nmt' if (type(d) == float and np.isnan(d)) else 'Tuh' for d in test_set.description['version']]},overwrite=True)
+
+    test_set_tuh = test_set.split('dataset')['Tuh']
+    test_set_nmt = test_set.split('dataset')['Nmt']
+    
+    test_X = SliceDataset(test_set, idx=0)
+    test_y = test_set.get_metadata().target.to_numpy()
+    y_true =test_y#[:,0]
+    b_acc_merge = balanced_accuracy_score(np.array(y_true), clf.predict(test_X))
+    print('B_acc_merged:', b_acc_merge)
+
+    test_X = SliceDataset(test_set_tuh, idx=0)
+    test_y = test_set_tuh.get_metadata().target.to_numpy()
+    y_true =test_y#[:,0]
+    b_acc_tuh = balanced_accuracy_score(np.array(y_true), clf.predict(test_X))
+    print('B_acc_tuh:', b_acc_tuh)
+
+    test_X = SliceDataset(test_set_nmt, idx=0)
+    test_y = test_set_nmt.get_metadata().target.to_numpy()
+    y_true =test_y#[:,0]
+    b_acc_nmt = balanced_accuracy_score(np.array(y_true), clf.predict(test_X))
+    print('B_acc_nmt:', b_acc_nmt)
+
+    return b_acc_merge, b_acc_tuh, b_acc_nmt
 
 def train_TUHEEG_pathology(model_name,
                      drop_prob,
@@ -352,6 +395,7 @@ def train_TUHEEG_pathology(model_name,
                     load_path = None,
                     train_folder2 = None,
                     augment = False,
+                    ids_to_load_train2=None,
                      ):
 
     ###################################
@@ -379,12 +423,15 @@ def train_TUHEEG_pathology(model_name,
     print('loading data')
     # load from train
     start = time.time()
-    with io.capture_output() as captured:
-        ds_all = load_concat_dataset(train_folder, preload=False, ids_to_load=ids_to_load_train)
-        if train_folder2:
-            ds_all2 = load_concat_dataset(train_folder2, preload=False, ids_to_load=ids_to_load_train)
-            ds_all = BaseConcatDataset(ds_all, ds_all2)
-        train_set = ds_all.split('train')['True']
+    # with io.capture_output() as captured:
+    ds_all = load_concat_dataset(train_folder, preload=False)#, ids_to_load=range(100))
+    if train_folder2:
+        print('loading second train folder')
+        ds_all2 = load_concat_dataset(train_folder2, preload=False)#, ids_to_load=range(100))
+        print('merging datasets')
+        ds_all = BaseConcatDataset([ds_all, ds_all2])
+        # print('ds_all:', ds_all.description)
+    train_set = ds_all.split('train')['True']
 
     end = time.time()
 
@@ -403,13 +450,13 @@ def train_TUHEEG_pathology(model_name,
 
         
     # load eval set
-    
+
     print('loading eval data')
     # load from train
     start = time.time()
-    with io.capture_output() as captured:
+    # with io.capture_output() as captured:
         # eval_complete = load_concat_dataset(eval_folder, preload=False, ids_to_load=None)
-        eval_complete = ds_all.split('train')['False']
+    eval_complete = ds_all.split('train')['False']
 
     end = time.time()
 
@@ -423,10 +470,47 @@ def train_TUHEEG_pathology(model_name,
         d.target = d.description[d.target_name]
     eval_complete.set_description(pd.DataFrame([d.description for d in eval_complete.datasets]), overwrite=True)
     
+    ## limit training set
+    # print('train_set' , train_set.description)
+    if train_folder2:
+        train_set.set_description({
+            "dataset": ['Nmt' if (type(d) == float and np.isnan(d)) else 'Tuh' for d in train_set.description['version']]},overwrite=True)
+
+        # print('train_set_datset', train_set.description)
+        train_set_tuh = train_set.split('dataset')['Tuh']
+        train_set_nmt = train_set.split('dataset')['Nmt']
+
+        n_of_rec_all = train_set_tuh.description.shape[0]
+        n_of_rec_to_pick = ids_to_load_train #n_of_rec_all#n_of_rec_all# n_of_rec_all ##2000
+        print('n_of_rec_to_pick', n_of_rec_to_pick, 'n_of_rec_all', n_of_rec_all )
+        assert n_of_rec_to_pick <= n_of_rec_all
+        train_set_tuh = train_set_tuh.split({"subsample":np.random.randint(0, n_of_rec_all, n_of_rec_to_pick).tolist()})["subsample"]
+
+        n_of_rec_all = train_set_nmt.description.shape[0]
+        n_of_rec_to_pick = ids_to_load_train2 #n_of_rec_all#n_of_rec_all# n_of_rec_all ##2000
+        print('n_of_rec_to_pick', n_of_rec_to_pick, 'n_of_rec_all', n_of_rec_all )
+        assert n_of_rec_to_pick <= n_of_rec_all
+        train_set_nmt = train_set_nmt.split({"subsample":np.random.randint(0, n_of_rec_all, n_of_rec_to_pick).tolist()})["subsample"]
+
+        train_set = BaseConcatDataset([train_set_tuh, train_set_nmt])
+
+        target = train_set.description['pathological'].astype(int)
+        dataset = pd.get_dummies(train_set.description['dataset'])['Tuh'].astype(int)
+        # print(target, dataset)
+        # for d, y, ds in zip(train_set.datasets, target, dataset):
+        #     d.description['pathological'] = y
+        #     d.target_name = 'pathological'
+        #     d.target = d.description[d.target_name]
+
+        #     d.description['dataset'] = ds
+        #     d.target_name = 'dataset'
+        #     d.ds = d.description[d.target_name]
+        # train_set.set_description(pd.DataFrame([d.description for d in train_set.datasets]), overwrite=True)
+    ## end limit training set
 
    
 
-   
+    print(model_name,'here')
     if not os.path.exists(result_folder + model_name + '/' + 'seed'+str(seed)):
             os.mkdir(result_folder + model_name + '/' + 'seed'+str(seed))
             print("Directory " , result_folder + model_name + '/' + 'seed'+str(seed) ,  " Created ")
@@ -592,6 +676,9 @@ def train_TUHEEG_pathology(model_name,
         transforms_train = transforms_val
     ## end of data augmentation ##
 
+    # print(window_train_set.get_metadata())
+    # print('target=',window_train_set.get_metadata().target, 'ds=', window_train_set.get_metadata().dataset)
+                   
     
     clf = EEGClassifier(
                     model,
@@ -608,6 +695,7 @@ def train_TUHEEG_pathology(model_name,
                     optimizer__weight_decay=weight_decay,
                     iterator_train__shuffle=False,
                     iterator_train__sampler = ImbalancedDatasetSampler(window_train_set, labels=window_train_set.get_metadata().target),
+                    # iterator_train__sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset),
                     batch_size=batch_size,
                     callbacks=["accuracy", "balanced_accuracy","f1",("lr_scheduler", LRScheduler('CosineAnnealingLR', T_max=n_epochs - 1)),],  #"accuracy",
                     device='cuda')
@@ -629,6 +717,14 @@ def train_TUHEEG_pathology(model_name,
     # Model training for a specified number of epochs. `y` is None as it is already supplied
     clf.fit(window_train_set, y=None, epochs=n_epochs)
     print('end training')
+
+    ####### EVAL ############
+    if train_folder2:
+        b_acc_merge, b_acc_tuh, b_acc_nmt = print_single_ds_performance(clf, window_eval_set)
+        save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt)
+
+    ### end of eval ###
+          
           #
      ####### SAVE ############
     print('saving')
