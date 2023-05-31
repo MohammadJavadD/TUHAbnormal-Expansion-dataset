@@ -484,18 +484,25 @@ def train_TUHEEG_pathology(model_name,
         n_of_rec_to_pick = ids_to_load_train #n_of_rec_all#n_of_rec_all# n_of_rec_all ##2000
         print('n_of_rec_to_pick', n_of_rec_to_pick, 'n_of_rec_all', n_of_rec_all )
         assert n_of_rec_to_pick <= n_of_rec_all
-        train_set_tuh = train_set_tuh.split({"subsample":np.random.randint(0, n_of_rec_all, n_of_rec_to_pick).tolist()})["subsample"]
+        if ids_to_load_train>0:
+            train_set_tuh = train_set_tuh.split({"subsample":np.random.randint(0, n_of_rec_all, n_of_rec_to_pick).tolist()})["subsample"]
 
         n_of_rec_all = train_set_nmt.description.shape[0]
         n_of_rec_to_pick = ids_to_load_train2 #n_of_rec_all#n_of_rec_all# n_of_rec_all ##2000
         print('n_of_rec_to_pick', n_of_rec_to_pick, 'n_of_rec_all', n_of_rec_all )
         assert n_of_rec_to_pick <= n_of_rec_all
-        train_set_nmt = train_set_nmt.split({"subsample":np.random.randint(0, n_of_rec_all, n_of_rec_to_pick).tolist()})["subsample"]
-
-        train_set = BaseConcatDataset([train_set_tuh, train_set_nmt])
+        if ids_to_load_train2>0:
+            train_set_nmt = train_set_nmt.split({"subsample":np.random.randint(0, n_of_rec_all, n_of_rec_to_pick).tolist()})["subsample"]
+        
+        if ids_to_load_train>0 and ids_to_load_train2>0:
+            train_set = BaseConcatDataset([train_set_tuh, train_set_nmt])
+        elif ids_to_load_train>0:
+            train_set = BaseConcatDataset([train_set_tuh])  
+        elif ids_to_load_train2>0:
+            train_set = BaseConcatDataset([train_set_nmt])
 
         target = train_set.description['pathological'].astype(int)
-        dataset = pd.get_dummies(train_set.description['dataset'])['Tuh'].astype(int)
+        # dataset = pd.get_dummies(train_set.description['dataset'])['Tuh'].astype(int)
         # print(target, dataset)
         # for d, y, ds in zip(train_set.datasets, target, dataset):
         #     d.description['pathological'] = y
@@ -510,7 +517,7 @@ def train_TUHEEG_pathology(model_name,
 
    
 
-    print(model_name,'here')
+    print('model:',model_name)
     if not os.path.exists(result_folder + model_name + '/' + 'seed'+str(seed)):
             os.mkdir(result_folder + model_name + '/' + 'seed'+str(seed))
             print("Directory " , result_folder + model_name + '/' + 'seed'+str(seed) ,  " Created ")
@@ -694,8 +701,8 @@ def train_TUHEEG_pathology(model_name,
                     optimizer__lr=lr,
                     optimizer__weight_decay=weight_decay,
                     iterator_train__shuffle=False,
-                    iterator_train__sampler = ImbalancedDatasetSampler(window_train_set, labels=window_train_set.get_metadata().target),
-                    # iterator_train__sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset),
+                    # iterator_train__sampler = ImbalancedDatasetSampler(window_train_set, labels=window_train_set.get_metadata().target),
+                    iterator_train__sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset),
                     batch_size=batch_size,
                     callbacks=["accuracy", "balanced_accuracy","f1",("lr_scheduler", LRScheduler('CosineAnnealingLR', T_max=n_epochs - 1)),],  #"accuracy",
                     device='cuda')
