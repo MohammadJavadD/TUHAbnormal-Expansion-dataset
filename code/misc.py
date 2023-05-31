@@ -48,19 +48,19 @@ class ImbalancedDatasetSampler_with_ds(torch.utils.data.sampler.Sampler):
         # print("df:", df)
         label_to_count = df[['label', 'dataset_label']].value_counts().to_list()
         # label_to_count = df["label"].value_counts()
-        # print("label_to_count:", label_to_count)
+        print("label_to_count:", label_to_count)
 
         # weights = 1.0 / label_to_count[df["label"]]
         weights = []
         for i in range(len(df["label"])):
             if df["label"][i] == 0 and df["dataset_label"][i] == 'Tuh':
-                weights.append(0.50 / label_to_count[0])
+                weights.append(1 / len(df[(df['label']==0) & (df['dataset_label']=='Tuh')]))
             elif df["label"][i] == 1 and df["dataset_label"][i] == 'Tuh':
-                weights.append(0.50 / label_to_count[1])
+                weights.append(1 / len(df[(df['label']==1) & (df['dataset_label']=='Tuh')]))
             elif df["label"][i] == 0 and df["dataset_label"][i] == 'Nmt':
-                weights.append(0.50 / label_to_count[2])
+                weights.append(1 / len(df[(df['label']==0) & (df['dataset_label']=='Nmt')]))
             elif df["label"][i] == 1 and df["dataset_label"][i] == 'Nmt':
-                weights.append(0.50 / label_to_count[3])
+                weights.append(1 / len(df[(df['label']==1) & (df['dataset_label']=='Nmt')]))
 
         # print("weights", weights)
 
