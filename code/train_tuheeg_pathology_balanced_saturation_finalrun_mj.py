@@ -424,10 +424,16 @@ def train_TUHEEG_pathology(model_name,
     # load from train
     start = time.time()
     # with io.capture_output() as captured:
-    ds_all = load_concat_dataset(train_folder, preload=False)#, ids_to_load=range(100))
+    ds_all = load_concat_dataset(train_folder, preload=False,
+                                # target_name=['pathological','age','gender'] ,#)
+                                # ids_to_load=range(200)
+                                )
     if train_folder2:
         print('loading second train folder')
-        ds_all2 = load_concat_dataset(train_folder2, preload=False)#, ids_to_load=range(100))
+        ds_all2 = load_concat_dataset(train_folder2, preload=False,
+                                # target_name=['pathological','age','gender'] ,#)
+                                # ids_to_load=range(200)
+                                )
         print('merging datasets')
         ds_all = BaseConcatDataset([ds_all, ds_all2])
         # print('ds_all:', ds_all.description)
@@ -436,6 +442,12 @@ def train_TUHEEG_pathology(model_name,
     end = time.time()
 
     print('finished loading preprocessed trainset ' + str(end-start))
+
+    # print('train_set', train_set.description)
+    # x, y = train_set[-1]
+    # print('x:', x.shape)
+    # print('y:', y)
+    # print('ind:', ind)
 
     target = train_set.description['pathological'].astype(int)
 
@@ -685,16 +697,34 @@ def train_TUHEEG_pathology(model_name,
 
     # print(window_train_set.get_metadata())
     # print('target=',window_train_set.get_metadata().target, 'ds=', window_train_set.get_metadata().dataset)
-                   
     
+    ## SWA parameters ##
+    from torch.optim import swa_utils
+    from misc import StochasticWeightAveraging
+    ## end of SWA parameters ##
+    ## OOD methods ##
+    from misc import CroppedLoss_sd
+    ## end of OOD methods ##
+
+    ## edit clf for multi-target ds ##
+    # labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset)
+    from misc import new_ds
+    window_train_set_new = new_ds(window_train_set)
+    print('new ds created')
+    # print(window_train_set_new[-1])
+    ## end of edit clf for multi-target ds ##
+
     clf = EEGClassifier(
                     model,
                     cropped=True,
-                    iterator_train=AugmentedDataLoader,  # This tells EEGClassifier to use a custom DataLoader
-                    iterator_train__transforms=transforms_train,  # This sets the augmentations to use
-                    iterator_valid =AugmentedDataLoader,  # This tells EEGClassifier to use a custom DataLoader
-                    iterator_valid__transforms=transforms_val,  # This sets the augmentations to use
-                    criterion=CroppedLoss,
+                    iterator_train=DataLoader,  # This tells EEGClassifier to use a custom DataLoader
+                    # iterator_train=AugmentedDataLoader,  # This tells EEGClassifier to use a custom DataLoader
+                    # iterator_train__transforms=transforms_train,  # This sets the augmentations to use
+                    iterator_valid =DataLoader,  # This tells EEGClassifier to use a custom DataLoader
+                    # iterator_valid =AugmentedDataLoader,  # This tells EEGClassifier to use a custom DataLoader
+                    # iterator_valid__transforms=transforms_val,  # This sets the augmentations to use
+                    # criterion=CroppedLoss,
+                    criterion=CroppedLoss_sd,
                     criterion__loss_function=torch.nn.functional.nll_loss,
                     optimizer=torch.optim.AdamW,
                     train_split=predefined_split(window_eval_set),
@@ -704,10 +734,13 @@ def train_TUHEEG_pathology(model_name,
                     # iterator_train__sampler = ImbalancedDatasetSampler(window_train_set, labels=window_train_set.get_metadata().target),
                     iterator_train__sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset),
                     batch_size=batch_size,
-                    callbacks=["accuracy", "balanced_accuracy","f1",("lr_scheduler", LRScheduler('CosineAnnealingLR', T_max=n_epochs - 1)),],  #"accuracy",
+                    callbacks=[
+                        # StochasticWeightAveraging(swa_utils, swa_start=1, verbose=1, swa_lr=lr),
+                        "accuracy", "balanced_accuracy","f1",("lr_scheduler", LRScheduler('CosineAnnealingLR', T_max=n_epochs - 1)),],  #"accuracy",
                     device='cuda')
     
-    
+
+
     # load pre-trained model ##
     if pre_trained:
         clf.initialize() # This is important!
@@ -722,7 +755,7 @@ def train_TUHEEG_pathology(model_name,
     print('classifier initialized')
 
     # Model training for a specified number of epochs. `y` is None as it is already supplied
-    clf.fit(window_train_set, y=None, epochs=n_epochs)
+    clf.fit(window_train_set_new, y=None, epochs=n_epochs)
     print('end training')
 
     ####### EVAL ############
