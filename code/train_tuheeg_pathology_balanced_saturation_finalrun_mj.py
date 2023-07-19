@@ -318,6 +318,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_curve
 from sklearn.metrics import roc_auc_score
+from skorch.callbacks import EarlyStopping
 
 
 
@@ -337,14 +338,14 @@ from torch.utils.data import DataLoader, ConcatDataset
 from sklearn.metrics import accuracy_score,balanced_accuracy_score
 from skorch.helper import SliceDataset
 
-def save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt):
+def save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2,lr,weight_decay,batch_size, b_acc_merge, b_acc_tuh, b_acc_nmt):
     
     model = clf.module_
     n_of_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     data = [
     # [seed,dataset, Model, Param, N_of_recordings, b_acc],
-    [seed, model_name ,n_of_params, ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt]
+    [seed, model_name ,n_of_params, ids_to_load_train, ids_to_load_train2,lr,weight_decay,batch_size, b_acc_merge, b_acc_tuh, b_acc_nmt]
     ]
 
     with open('output_all.csv', 'a', newline='') as f:
@@ -416,6 +417,41 @@ def train_TUHEEG_pathology(model_name,
     # Set random seed to be able to reproduce results
     set_random_seeds(seed=seed, cuda=cuda)
 
+
+    ## add wandb ##
+    # Install wandb
+    # ... pip install wandb
+
+    import wandb
+    from skorch.callbacks import WandbLogger
+
+    # Create a wandb Run
+    wandb_run = wandb.init(
+        # Set the project where this run will be logged
+        project="tuh_sc_hps_pp6",
+        name=task_name,
+        # Track hyperparameters and run metadata
+        config={
+            "task_name": task_name,
+            "model_name": model_name,
+            "seed": seed,
+            "ids_to_load_train": ids_to_load_train,
+            "ids_to_load_train2": ids_to_load_train2,
+            "batch_size": batch_size,
+            "weight_decay": weight_decay,
+            "drop_prob": drop_prob,
+            "learning_rate": lr,
+            "epochs": n_epochs,
+    })
+    # Alternative: Create a wandb Run without a W&B account
+    # wandb_run = wandb.init(anonymous="allow")
+
+    # Log hyper-parameters (optional)
+    # wandb_run.config.update({"learning rate": 1e-3, "batch size": 32})
+
+    # net = NeuralNet(..., callbacks=[WandbLogger(wandb_run)])
+    # net.fit(X, y)
+    ## end of add wandb ##
     
    
     print(task_name)
@@ -467,20 +503,22 @@ def train_TUHEEG_pathology(model_name,
     # load from train
     start = time.time()
     # with io.capture_output() as captured:
-        # eval_complete = load_concat_dataset(eval_folder, preload=False, ids_to_load=None)
-    eval_complete = ds_all.split('train')['False']
+        # test_complete = load_concat_dataset(eval_folder, preload=False, ids_to_load=None)
+    test_complete = ds_all.split('train')['False']
+
+
 
     end = time.time()
 
     print('finished loading preprocessed trainset ' + str(end-start))
 
-    target = eval_complete.description['pathological'].astype(int)
+    target = test_complete.description['pathological'].astype(int)
     
-    for d, y in zip(eval_complete.datasets, target):
+    for d, y in zip(test_complete.datasets, target):
         d.description['pathological'] = y
         d.target_name = 'pathological'
         d.target = d.description[d.target_name]
-    eval_complete.set_description(pd.DataFrame([d.description for d in eval_complete.datasets]), overwrite=True)
+    test_complete.set_description(pd.DataFrame([d.description for d in test_complete.datasets]), overwrite=True)
     
     ## limit training set
     # print('train_set' , train_set.description)
@@ -495,15 +533,15 @@ def train_TUHEEG_pathology(model_name,
         n_of_rec_all = train_set_tuh.description.shape[0]
         n_of_rec_to_pick = ids_to_load_train #n_of_rec_all#n_of_rec_all# n_of_rec_all ##2000
         print('n_of_rec_to_pick', n_of_rec_to_pick, 'n_of_rec_all', n_of_rec_all )
-        assert n_of_rec_to_pick <= n_of_rec_all
         if ids_to_load_train>0:
+            assert n_of_rec_to_pick <= n_of_rec_all
             train_set_tuh = train_set_tuh.split({"subsample":np.random.randint(0, n_of_rec_all, n_of_rec_to_pick).tolist()})["subsample"]
 
         n_of_rec_all = train_set_nmt.description.shape[0]
         n_of_rec_to_pick = ids_to_load_train2 #n_of_rec_all#n_of_rec_all# n_of_rec_all ##2000
         print('n_of_rec_to_pick', n_of_rec_to_pick, 'n_of_rec_all', n_of_rec_all )
-        assert n_of_rec_to_pick <= n_of_rec_all
         if ids_to_load_train2>0:
+            assert n_of_rec_to_pick <= n_of_rec_all
             train_set_nmt = train_set_nmt.split({"subsample":np.random.randint(0, n_of_rec_all, n_of_rec_to_pick).tolist()})["subsample"]
         
         if ids_to_load_train>0 and ids_to_load_train2>0:
@@ -526,6 +564,21 @@ def train_TUHEEG_pathology(model_name,
         #     d.ds = d.description[d.target_name]
         # train_set.set_description(pd.DataFrame([d.description for d in train_set.datasets]), overwrite=True)
     ## end limit training set
+
+    ## split trainset to val/train
+    a = train_set.description['train'].values
+    # choose 15 percent of the indices randomly
+    indices = np.random.choice(a.size, int(a.size * 0.15), replace=False)
+    # assign False to those indices
+    a[indices] = False
+
+    train_set.set_description({
+        "train": [ii for ii in a]},overwrite=True)
+    
+    train_set_splited = train_set.split('train')
+    train_set = train_set_splited['True']
+    val_set = train_set_splited['False']
+    ## end of split trainset to val/train
 
    
 
@@ -650,9 +703,16 @@ def train_TUHEEG_pathology(model_name,
                                                         window_size_samples=input_window_samples,
                                                         window_stride_samples=n_preds_per_input,
                                                         drop_last_window=True,)
-
     with io.capture_output() as captured:
-         window_eval_set = create_fixed_length_windows(eval_complete,
+         window_val_set = create_fixed_length_windows(val_set, 
+                                                        start_offset_samples=0,
+                                                        stop_offset_samples=None,
+                                                        preload=True,
+                                                        window_size_samples=input_window_samples,
+                                                        window_stride_samples=n_preds_per_input,
+                                                        drop_last_window=True,)
+    with io.capture_output() as captured:
+         window_test_set = create_fixed_length_windows(test_complete,
                                                         start_offset_samples=0,
                                                         stop_offset_samples=None,preload=False,
                                                         window_size_samples=input_window_samples,
@@ -663,11 +723,11 @@ def train_TUHEEG_pathology(model_name,
     print('abnormal train ' + str(len(window_train_set.description[window_train_set.description['pathological']==1])))
     print('normal train ' + str(len(window_train_set.description[window_train_set.description['pathological']==0])))
 
+    print('abnormal val' + str(len(window_val_set.description[window_val_set.description['pathological']==1])))
+    print('normal val ' + str(len(window_val_set.description[window_val_set.description['pathological']==0])))
 
-    print('abnormal eval' + str(len(window_eval_set.description[window_eval_set.description['pathological']==1])))
-
-
-    print('normal eval ' + str(len(window_eval_set.description[window_eval_set.description['pathological']==0])))
+    print('abnormal test' + str(len(window_test_set.description[window_test_set.description['pathological']==1])))
+    print('normal test ' + str(len(window_test_set.description[window_test_set.description['pathological']==0])))
 
     ## data augmentation ##
     from torchvision.transforms import Normalize
@@ -683,12 +743,12 @@ def train_TUHEEG_pathology(model_name,
     if augment:
         transforms_train = [
             IdentityTransform(),
-            SignFlip(probability=.3),
-            ChannelsDropout(probability=.3, p_drop=.2),
-            FrequencyShift(probability=.3, sfreq=sfreq, max_delta_freq=2),
+            SignFlip(probability=.1),
+            ChannelsDropout(probability=.1, p_drop=.2),
+            FrequencyShift(probability=.1, sfreq=sfreq, max_delta_freq=2),
             SmoothTimeMask(probability=.3, mask_len_samples=600),
-            BandstopFilter(probability=.3, sfreq=sfreq),
-            ChannelsShuffle(probability=.2),
+            BandstopFilter(probability=.1, sfreq=sfreq),
+            ChannelsShuffle(probability=.1),
             # scale_norm(1.,mean, std),
         ]
     else:
@@ -709,34 +769,41 @@ def train_TUHEEG_pathology(model_name,
     ## edit clf for multi-target ds ##
     # labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset)
     from misc import new_ds
-    window_train_set_new = new_ds(window_train_set)
-    print('new ds created')
+    # window_train_set_new = new_ds(window_train_set)
+    # print('new ds created')
     # print(window_train_set_new[-1])
     ## end of edit clf for multi-target ds ##
+
+
+
 
     clf = EEGClassifier(
                     model,
                     cropped=True,
-                    iterator_train=DataLoader,  # This tells EEGClassifier to use a custom DataLoader
-                    # iterator_train=AugmentedDataLoader,  # This tells EEGClassifier to use a custom DataLoader
-                    # iterator_train__transforms=transforms_train,  # This sets the augmentations to use
-                    iterator_valid =DataLoader,  # This tells EEGClassifier to use a custom DataLoader
-                    # iterator_valid =AugmentedDataLoader,  # This tells EEGClassifier to use a custom DataLoader
-                    # iterator_valid__transforms=transforms_val,  # This sets the augmentations to use
-                    # criterion=CroppedLoss,
-                    criterion=CroppedLoss_sd,
+                    # iterator_train=DataLoader,  # This tells EEGClassifier to use a custom DataLoader
+                    iterator_train=AugmentedDataLoader,  # This tells EEGClassifier to use a custom DataLoader
+                    iterator_train__transforms=transforms_train,  # This sets the augmentations to use
+                    # iterator_valid =DataLoader,  # This tells EEGClassifier to use a custom DataLoader
+                    iterator_valid =AugmentedDataLoader,  # This tells EEGClassifier to use a custom DataLoader
+                    iterator_valid__transforms=transforms_val,  # This sets the augmentations to use
+                    criterion=CroppedLoss,
+                    # criterion=CroppedLoss_sd,
                     criterion__loss_function=torch.nn.functional.nll_loss,
                     optimizer=torch.optim.AdamW,
-                    train_split=predefined_split(window_eval_set),
+                    train_split=predefined_split(window_val_set),
                     optimizer__lr=lr,
                     optimizer__weight_decay=weight_decay,
                     iterator_train__shuffle=False,
                     # iterator_train__sampler = ImbalancedDatasetSampler(window_train_set, labels=window_train_set.get_metadata().target),
                     iterator_train__sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset),
+                    # iterator_valid__sampler = ImbalancedDatasetSampler_with_ds(window_val_set, labels=window_val_set.get_metadata().target, dataset_label=window_val_set.get_metadata().dataset),
                     batch_size=batch_size,
                     callbacks=[
+                        EarlyStopping(patience=5),
                         # StochasticWeightAveraging(swa_utils, swa_start=1, verbose=1, swa_lr=lr),
-                        "accuracy", "balanced_accuracy","f1",("lr_scheduler", LRScheduler('CosineAnnealingLR', T_max=n_epochs - 1)),],  #"accuracy",
+                        "accuracy", "balanced_accuracy","f1",("lr_scheduler", LRScheduler('CosineAnnealingLR', T_max=n_epochs - 1)),
+                        WandbLogger(wandb_run),
+                        ],  #"accuracy",
                     device='cuda')
     
 
@@ -755,13 +822,13 @@ def train_TUHEEG_pathology(model_name,
     print('classifier initialized')
 
     # Model training for a specified number of epochs. `y` is None as it is already supplied
-    clf.fit(window_train_set_new, y=None, epochs=n_epochs)
+    clf.fit(window_train_set, y=None, epochs=n_epochs)
     print('end training')
 
     ####### EVAL ############
     if train_folder2:
-        b_acc_merge, b_acc_tuh, b_acc_nmt = print_single_ds_performance(clf, window_eval_set)
-        save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt)
+        b_acc_merge, b_acc_tuh, b_acc_nmt = print_single_ds_performance(clf, window_test_set)
+        save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2,lr,weight_decay,batch_size, b_acc_merge, b_acc_tuh, b_acc_nmt)
 
     ### end of eval ###
           
@@ -777,8 +844,8 @@ def train_TUHEEG_pathology(model_name,
             
     results_columns = ['train_loss','valid_loss','train_accuracy','valid_accuracy']#, 'train_balanced_accuracy', 'valid_balanced_accuracy']
 
-    df = pd.DataFrame(clf.history[:, results_columns], columns=results_columns,index=clf.history[:, 'epoch'])
-    df.to_pickle(result_path + '_df_history.pkl')
+    # df = pd.DataFrame(clf.history[:, results_columns], columns=results_columns,index=clf.history[:, 'epoch'])
+    # df.to_pickle(result_path + '_df_history.pkl')
     #save history
     torch.save(clf.history, result_path + '_clf_history.py')
     
@@ -790,7 +857,7 @@ def train_TUHEEG_pathology(model_name,
     clf.save_params(f_params=result_path +'model.pkl', f_optimizer= result_path +'opt.pkl', f_history=result_path +'history.json')
 
     
-    pred_win = clf.predict_with_window_inds_and_ys(window_eval_set)
+    pred_win = clf.predict_with_window_inds_and_ys(window_test_set)
 
 
 
@@ -798,7 +865,7 @@ def train_TUHEEG_pathology(model_name,
     mean_preds_per_trial = [np.mean(preds, axis=1) for preds in
                                     preds_per_trial]
     mean_preds_per_trial = np.array(mean_preds_per_trial)
-    y = window_eval_set.description['pathological']
+    y = window_test_set.description['pathological']
     column0, column1 = "non-pathological", "pathological"
     a_dict = {column0: mean_preds_per_trial[:, 0],
               column1: mean_preds_per_trial[:, 1],
@@ -813,7 +880,7 @@ def train_TUHEEG_pathology(model_name,
 
     
     deep_preds =  mean_preds_per_trial[:, 0] <=  mean_preds_per_trial[:, 1]
-    class_label = window_eval_set.description['pathological']
+    class_label = window_test_set.description['pathological']
     class_preds =deep_preds.astype(int)
 
 
