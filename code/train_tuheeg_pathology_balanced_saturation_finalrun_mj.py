@@ -3,6 +3,8 @@ import os
 import mne
 mne.set_log_level('ERROR')
 
+from skorch.callbacks import WandbLogger
+
 from warnings import filterwarnings
 filterwarnings('ignore')
 
@@ -23,6 +25,8 @@ from torch.utils.data import WeightedRandomSampler
 
 from braindecode import EEGClassifier
 from braindecode.training.losses import CroppedLoss
+CroppedLoss.reduction = "mean"
+from skorch.scoring import loss_scoring
 from braindecode.models import Deep4Net,ShallowFBCSPNet,EEGNetv4, TCN
 from braindecode.util import set_random_seeds
 from braindecode.models.util import to_dense_prediction_model, get_output_shape
@@ -338,19 +342,20 @@ from torch.utils.data import DataLoader, ConcatDataset
 from sklearn.metrics import accuracy_score,balanced_accuracy_score
 from skorch.helper import SliceDataset
 
-def save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2,lr,weight_decay,batch_size, b_acc_merge, b_acc_tuh, b_acc_nmt):
+def save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt, write = True):
     
     model = clf.module_
     n_of_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     data = [
     # [seed,dataset, Model, Param, N_of_recordings, b_acc],
-    [seed, model_name ,n_of_params, ids_to_load_train, ids_to_load_train2,lr,weight_decay,batch_size, b_acc_merge, b_acc_tuh, b_acc_nmt]
+    [seed, model_name ,n_of_params, ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt]
     ]
 
-    with open('output_all.csv', 'a', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerows(data)
+    if write:
+        with open('output_all.csv', 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerows(data)
 
 def print_single_ds_performance(clf, test_set):
     test_set.set_description({
@@ -363,22 +368,41 @@ def print_single_ds_performance(clf, test_set):
     test_y = test_set.get_metadata().target.to_numpy()
     y_true =test_y#[:,0]
     b_acc_merge = balanced_accuracy_score(np.array(y_true), clf.predict(test_X))
+    loss_merge = loss_scoring (clf,test_X,test_y) 
+    print('loss_merge:', loss_merge)
     print('B_acc_merged:', b_acc_merge)
 
     test_X = SliceDataset(test_set_tuh, idx=0)
     test_y = test_set_tuh.get_metadata().target.to_numpy()
     y_true =test_y#[:,0]
     b_acc_tuh = balanced_accuracy_score(np.array(y_true), clf.predict(test_X))
+    loss_tuh = loss_scoring (clf,test_X,test_y) 
+    print('loss_tuh:', loss_tuh)
     print('B_acc_tuh:', b_acc_tuh)
 
     test_X = SliceDataset(test_set_nmt, idx=0)
     test_y = test_set_nmt.get_metadata().target.to_numpy()
     y_true =test_y#[:,0]
     b_acc_nmt = balanced_accuracy_score(np.array(y_true), clf.predict(test_X))
+    loss_nmt = loss_scoring (clf,test_X,test_y) 
+    print('loss_merge:', loss_nmt)
     print('B_acc_nmt:', b_acc_nmt)
 
-    return b_acc_merge, b_acc_tuh, b_acc_nmt
+    test_X = SliceDataset(test_set_nmt, idx=0)
+    y_true = test_set_nmt.get_metadata().target.to_numpy()
+    # np.random.shuffle(y_true)#[:,0]
+    b_acc_nmt_shuffle = balanced_accuracy_score(np.random.permutation(y_true), clf.predict(test_X))
+    print('b_acc_nmt_shuffle_y_true:', b_acc_nmt_shuffle)
 
+    test_X = SliceDataset(test_set_nmt, idx=0)
+    y_true = test_set_nmt.get_metadata().target.to_numpy()
+    y_pred = clf.predict(test_X)
+    # np.random.shuffle(y_pred)#[:,0]
+    b_acc_nmt_shuffle = balanced_accuracy_score(np.array(y_true), np.random.permutation(y_pred))
+    print('b_acc_nmt_shuffle_y_pred:', b_acc_nmt_shuffle)
+
+    return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
+    
 def train_TUHEEG_pathology(model_name,
                      drop_prob,
                      batch_size,
@@ -397,7 +421,8 @@ def train_TUHEEG_pathology(model_name,
                     train_folder2 = None,
                     augment = False,
                     ids_to_load_train2=None,
-                     ):
+                    wandb_run = None,
+                    ):
 
     ###################################
     target_name = None  # Comment Lukas our target is not supported by default, set None and add later 
@@ -417,41 +442,6 @@ def train_TUHEEG_pathology(model_name,
     # Set random seed to be able to reproduce results
     set_random_seeds(seed=seed, cuda=cuda)
 
-
-    ## add wandb ##
-    # Install wandb
-    # ... pip install wandb
-
-    import wandb
-    from skorch.callbacks import WandbLogger
-
-    # Create a wandb Run
-    wandb_run = wandb.init(
-        # Set the project where this run will be logged
-        project="tuh_sc_hps_pp6",
-        name=task_name,
-        # Track hyperparameters and run metadata
-        config={
-            "task_name": task_name,
-            "model_name": model_name,
-            "seed": seed,
-            "ids_to_load_train": ids_to_load_train,
-            "ids_to_load_train2": ids_to_load_train2,
-            "batch_size": batch_size,
-            "weight_decay": weight_decay,
-            "drop_prob": drop_prob,
-            "learning_rate": lr,
-            "epochs": n_epochs,
-    })
-    # Alternative: Create a wandb Run without a W&B account
-    # wandb_run = wandb.init(anonymous="allow")
-
-    # Log hyper-parameters (optional)
-    # wandb_run.config.update({"learning rate": 1e-3, "batch size": 32})
-
-    # net = NeuralNet(..., callbacks=[WandbLogger(wandb_run)])
-    # net.fit(X, y)
-    ## end of add wandb ##
     
    
     print(task_name)
@@ -719,6 +709,11 @@ def train_TUHEEG_pathology(model_name,
                                                         window_stride_samples=n_preds_per_input,
                                                         drop_last_window=False,)
 
+    from misc import scale_01
+    window_train_set.__setattr__('transform', scale_01(probability=1))
+    window_val_set.__setattr__('transform', scale_01(probability=1))
+    window_test_set.__setattr__('transform', scale_01(probability=1))
+
     #del  train_set
     print('abnormal train ' + str(len(window_train_set.description[window_train_set.description['pathological']==1])))
     print('normal train ' + str(len(window_train_set.description[window_train_set.description['pathological']==0])))
@@ -731,8 +726,8 @@ def train_TUHEEG_pathology(model_name,
 
     ## data augmentation ##
     from torchvision.transforms import Normalize
-    from braindecode.augmentation import AugmentedDataLoader, SignFlip, IdentityTransform, ChannelsDropout, FrequencyShift, ChannelsShuffle, SmoothTimeMask, BandstopFilter
-    # from misc import scale_norm
+    from braindecode.augmentation import AugmentedDataLoader, SignFlip, IdentityTransform, ChannelsDropout, FrequencyShift, ChannelsShuffle, SmoothTimeMask, BandstopFilter 
+
 
     transforms_val = [
         # scale_norm(.1,mean, std),
@@ -774,7 +769,13 @@ def train_TUHEEG_pathology(model_name,
     # print(window_train_set_new[-1])
     ## end of edit clf for multi-target ds ##
 
+    ## add checkpoint ##
+    from skorch.callbacks import Checkpoint
 
+    checkpoint = Checkpoint(
+    f_params='best_model.pt',
+      monitor='valid_balanced_accuracy_best'
+      )
 
 
     clf = EEGClassifier(
@@ -799,14 +800,18 @@ def train_TUHEEG_pathology(model_name,
                     # iterator_valid__sampler = ImbalancedDatasetSampler_with_ds(window_val_set, labels=window_val_set.get_metadata().target, dataset_label=window_val_set.get_metadata().dataset),
                     batch_size=batch_size,
                     callbacks=[
-                        EarlyStopping(patience=5),
+                        # EarlyStopping(patience=5),
                         # StochasticWeightAveraging(swa_utils, swa_start=1, verbose=1, swa_lr=lr),
                         "accuracy", "balanced_accuracy","f1",("lr_scheduler", LRScheduler('CosineAnnealingLR', T_max=n_epochs - 1)),
                         WandbLogger(wandb_run),
+                        checkpoint,
                         ],  #"accuracy",
                     device='cuda')
     
 
+
+    clf.initialize() # This is important!
+    print('classifier initialized')
 
     # load pre-trained model ##
     if pre_trained:
@@ -816,23 +821,39 @@ def train_TUHEEG_pathology(model_name,
         print('pre-trained model loaded')
     # end of load pre-trained model ##
 
+    ####### EVAL pre ############
+    print('Evaluating before training')
+    # if train_folder2:
+    b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = print_single_ds_performance(clf, window_test_set)
+    save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt,write =False)
+    wandb.run.summary["loss_merge"] = loss_merge
+    wandb.run.summary["loss_tuh"] = loss_tuh
+    wandb.run.summary["loss_nmt"] = loss_nmt
+    ### end of eval ###
+
     print('AdamW')
     print("Number of parameters = ", sum(p.numel() for p in model.parameters() if p.requires_grad))
 
-    print('classifier initialized')
+
 
     # Model training for a specified number of epochs. `y` is None as it is already supplied
     clf.fit(window_train_set, y=None, epochs=n_epochs)
     print('end training')
 
-    ####### EVAL ############
-    if train_folder2:
-        b_acc_merge, b_acc_tuh, b_acc_nmt = print_single_ds_performance(clf, window_test_set)
-        save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2,lr,weight_decay,batch_size, b_acc_merge, b_acc_tuh, b_acc_nmt)
+    ## load the best model
+    clf.initialize()
+    clf.load_params(checkpoint=checkpoint)
+    print('best model loaded')
+    ## end of load the best model 
 
     ### end of eval ###
-          
-          #
+    ####### EVAL ############
+    # if train_folder2:
+    b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = print_single_ds_performance(clf, window_test_set)
+    save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt)
+
+    ### end of eval ###
+
      ####### SAVE ############
     print('saving')
     # save model

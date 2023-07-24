@@ -34,6 +34,42 @@ def main():
     # parse the arguments
     args = parser.parse_args()
 
+
+    ## add wandb ##
+    # Install wandb
+    # ... pip install wandb
+    import wandb
+
+    # Create a wandb Run
+    wandb_run = wandb.init(
+        # Set the project where this run will be logged
+        project="tuh_sc_hps_pp3_cp",
+        name=args.task_name,
+        # Track hyperparameters and run metadata
+        config= vars(args),
+        # config={
+        #     "task_name": args.task_name,
+        #     "model_name": args.model_name,
+        #     "seed": args.seed,
+        #     "ids_to_load_train": args.ids_to_load_train,
+        #     "ids_to_load_train2": args.ids_to_load_train2,
+        #     "batch_size": args.batch_size,
+        #     "weight_decay": args.weight_decay,
+        #     "drop_prob": args.drop_prob,
+        #     "learning_rate": args.lr,
+        #     "epochs": args.n_epochs,
+        # }
+    )
+    # Alternative: Create a wandb Run without a W&B account
+    # wandb_run = wandb.init(anonymous="allow")
+
+    # Log hyper-parameters (optional)
+    # wandb_run.config.update({"learning rate": 1e-3, "batch size": 32})
+
+    # net = NeuralNet(..., callbacks=[WandbLogger(wandb_run)])
+    # net.fit(X, y)
+    ## end of add wandb ##
+
     # print the arguments
     for k, v in vars (args).items ():
         print (f' {k} : {v}')
@@ -63,6 +99,7 @@ def main():
                         pre_trained = args.pre_trained,
                         load_path = args.load_path,
                         augment = args.augment,
+                        wandb_run = wandb_run
                         )
 
 if __name__ == "__main__":
