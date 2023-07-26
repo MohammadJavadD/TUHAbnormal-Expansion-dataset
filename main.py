@@ -80,7 +80,7 @@ def main():
     # if args.ids_to_load_train2 is not None:
     #     args.ids_to_load_train2 = range (args.ids_to_load_train2)
 
-    train_TUHEEG_pathology(
+    b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = train_TUHEEG_pathology(
                         model_name= args.model_name,
                         task_name = args.task_name,
                         drop_prob= args.drop_prob,
@@ -101,7 +101,12 @@ def main():
                         augment = args.augment,
                         wandb_run = wandb_run
                         )
-
+    wandb.run.summary["loss_merge"] = loss_merge
+    wandb.run.summary["loss_tuh"] = loss_tuh
+    wandb.run.summary["loss_nmt"] = loss_nmt
+    wandb.run.summary["b_acc_merge"] = b_acc_merge
+    wandb.run.summary["b_acc_tuh"] = b_acc_tuh
+    wandb.run.summary["b_acc_nmt"] = b_acc_nmt
 if __name__ == "__main__":
     main()
 

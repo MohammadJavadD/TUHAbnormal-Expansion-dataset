@@ -416,7 +416,7 @@ def train_TUHEEG_pathology(model_name,
                      ids_to_load_train,
                      seed,
                      cuda = True,
-                    pre_trained = True,
+                    pre_trained = False,
                     load_path = None,
                     train_folder2 = None,
                     augment = False,
@@ -774,8 +774,18 @@ def train_TUHEEG_pathology(model_name,
 
     checkpoint = Checkpoint(
     f_params='best_model.pt',
-      monitor='valid_balanced_accuracy_best'
+    #   monitor='valid_balanced_accuracy_best'
       )
+
+    if pre_trained:
+        state_dicts = torch.load(load_path)# +'state_dict_2023.pt')
+        model.load_state_dict(state_dicts, strict= False)
+        print('pre-trained model loaded using pytorch')
+        # clf.load_params(
+        #     f_params=load_path +'state_dict_2023.pt')#, f_optimizer= load_path +'opt.pkl', f_history=load_path +'history.json')
+        #     # f_params=load_path +'model.pkl')#, f_optimizer= load_path +'opt.pkl', f_history=load_path +'history.json')
+        # print('pre-trained model loaded')
+        # clf.initialize() # This is important!
 
 
     clf = EEGClassifier(
@@ -813,22 +823,22 @@ def train_TUHEEG_pathology(model_name,
     clf.initialize() # This is important!
     print('classifier initialized')
 
-    # load pre-trained model ##
-    if pre_trained:
-        clf.initialize() # This is important!
-        clf.load_params(
-            f_params=load_path +'model.pkl', f_optimizer= load_path +'opt.pkl', f_history=load_path +'history.json')
-        print('pre-trained model loaded')
-    # end of load pre-trained model ##
+    # # load pre-trained model ##
+    # if pre_trained:
+    #     clf.initialize() # This is important!
+    #     clf.load_params(
+    #         f_params=load_path +'model.pkl', f_optimizer= load_path +'opt.pkl', f_history=load_path +'history.json')
+    #     print('pre-trained model loaded')
+    # # end of load pre-trained model ##
 
     ####### EVAL pre ############
     print('Evaluating before training')
     # if train_folder2:
     b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = print_single_ds_performance(clf, window_test_set)
     save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt,write =False)
-    wandb.run.summary["loss_merge"] = loss_merge
-    wandb.run.summary["loss_tuh"] = loss_tuh
-    wandb.run.summary["loss_nmt"] = loss_nmt
+    # wandb.run.summary["loss_merge"] = loss_merge
+    # wandb.run.summary["loss_tuh"] = loss_tuh
+    # wandb.run.summary["loss_nmt"] = loss_nmt
     ### end of eval ###
 
     print('AdamW')
@@ -913,6 +923,7 @@ def train_TUHEEG_pathology(model_name,
 
     
     del model, clf, window_train_set
+    return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
 
 
 
