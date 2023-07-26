@@ -125,6 +125,8 @@ class ImbalancedDatasetSampler(torch.utils.data.sampler.Sampler):
 
         label_to_count = df["label"].value_counts()
 
+        print("label_to_count:", label_to_count)
+
         weights = 1.0 / label_to_count[df["label"]]
 
         self.weights = torch.DoubleTensor(weights.to_list())
@@ -176,6 +178,55 @@ from skorch.callbacks import Callback
 
 from braindecode.augmentation import Transform
 from torchvision.transforms.functional import normalize
+from braindecode.augmentation import Transform
+
+def scale_01_f(X, y):
+    """normalize ds to mean and std operation.
+
+    Parameters
+    ----------
+    X : torch.Tensor
+        EEG input example or batch.
+    y : torch.Tensor
+        EEG labels for the example or batch.
+
+    Returns
+    -------
+    torch.Tensor
+        Transformed inputs.
+    torch.Tensor
+        Transformed labels.
+    """
+    # print(X.shape, X, y)
+    for ii in range(X.shape[0]):
+        X[ii,:] = (X[ii,:] - X[ii,:].min()) / (X[ii,:].max() - X[ii,:].min())
+    # # X = normalize (X.unsqueeze(dim=3),mean, std, inplace=False).squeeze()
+
+    return X, y
+
+class scale_01(Transform):
+    """scale each input with a given probability.
+
+    Parameters
+    ----------
+    probability : float
+        Float setting the probability of applying the operation.
+    random_state: int | numpy.random.Generator, optional
+        Seed to be used to instantiate numpy random number generator instance.
+        Used to decide whether or not to transform given the probability
+        argument. Defaults to None.
+    """
+    operation = staticmethod(scale_01_f)
+
+    def __init__(
+        self,
+        probability,
+        random_state=None
+    ):
+        super().__init__(
+            probability=probability,
+            random_state=random_state
+        )
 
 def scale_norm_f(X, y , mean, std):
     """normalize ds to mean and std operation.
