@@ -37,6 +37,9 @@ from braindecode.datautil.serialization import  load_concat_dataset
 
 from braindecode.datasets import BaseConcatDataset
 from braindecode.datautil.preprocess import preprocess, Preprocessor, exponential_moving_standardize
+from braindecode.augmentation import Mixup, Mixup_class
+from torchvision.transforms import Normalize
+from braindecode.augmentation import AugmentedDataLoader, SignFlip, IdentityTransform, ChannelsDropout, FrequencyShift, ChannelsShuffle, SmoothTimeMask, BandstopFilter 
 
 
 from braindecode.training import trial_preds_from_window_preds
@@ -385,7 +388,7 @@ def print_single_ds_performance(clf, test_set):
     y_true =test_y#[:,0]
     b_acc_nmt = balanced_accuracy_score(np.array(y_true), clf.predict(test_X))
     loss_nmt = loss_scoring (clf,test_X,test_y) 
-    print('loss_merge:', loss_nmt)
+    print('loss_nmt:', loss_nmt)
     print('B_acc_nmt:', b_acc_nmt)
 
     test_X = SliceDataset(test_set_nmt, idx=0)
@@ -725,10 +728,6 @@ def train_TUHEEG_pathology(model_name,
     print('normal test ' + str(len(window_test_set.description[window_test_set.description['pathological']==0])))
 
     ## data augmentation ##
-    from torchvision.transforms import Normalize
-    from braindecode.augmentation import AugmentedDataLoader, SignFlip, IdentityTransform, ChannelsDropout, FrequencyShift, ChannelsShuffle, SmoothTimeMask, BandstopFilter 
-
-
     transforms_val = [
         # scale_norm(.1,mean, std),
         IdentityTransform(),
@@ -741,9 +740,11 @@ def train_TUHEEG_pathology(model_name,
             SignFlip(probability=.1),
             ChannelsDropout(probability=.1, p_drop=.2),
             FrequencyShift(probability=.1, sfreq=sfreq, max_delta_freq=2),
-            SmoothTimeMask(probability=.3, mask_len_samples=600),
+            SmoothTimeMask(probability=.1, mask_len_samples=600),
             BandstopFilter(probability=.1, sfreq=sfreq),
             ChannelsShuffle(probability=.1),
+            # Mixup(alpha=.1),
+            # Mixup_class(alpha=.1),
             # scale_norm(1.,mean, std),
         ]
     else:
@@ -773,8 +774,8 @@ def train_TUHEEG_pathology(model_name,
     from skorch.callbacks import Checkpoint
 
     checkpoint = Checkpoint(
-    f_params='best_model.pt',
-    #   monitor='valid_balanced_accuracy_best'
+        dirname=result_path,
+        monitor='valid_balanced_accuracy_best'
       )
 
     if pre_trained:
@@ -835,10 +836,15 @@ def train_TUHEEG_pathology(model_name,
     print('Evaluating before training')
     # if train_folder2:
     b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = print_single_ds_performance(clf, window_test_set)
-    save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt,write =False)
+    save_as_csv(clf, seed, model_name,0, 0, b_acc_merge, b_acc_tuh, b_acc_nmt,write =False)
     # wandb.run.summary["loss_merge"] = loss_merge
     # wandb.run.summary["loss_tuh"] = loss_tuh
     # wandb.run.summary["loss_nmt"] = loss_nmt
+    if ids_to_load_train2 < 25:
+        print("ids_to_load_train2 < 25 and returing results before training")
+        return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
+
+
     ### end of eval ###
 
     print('AdamW')
