@@ -10,15 +10,15 @@ def defualt_parser(args):
         args.drop_prob=0.25
         args.lr=0.001
         args.weight_decay=0
-    if args.model_name == 'Deep4Net':
+    elif args.model_name == 'Deep4Net':
         args.drop_prob=0.5
         args.lr=0.01
         args.weight_decay=0.0005
-    if  args.model_name == 'Shallow':
+    elif  args.model_name == 'Shallow':
         args.drop_prob=0.5
         args.lr=0.000625
         args.weight_decay=0
-    if args.model_name == 'TCN':
+    elif args.model_name == 'TCN':
         args.drop_prob=0.05270154233150525
         args.lr=0.0011261049710243193
         args.weight_decay=5.83730537673086e-07
