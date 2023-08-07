@@ -37,7 +37,7 @@ from braindecode.datautil.serialization import  load_concat_dataset
 
 from braindecode.datasets import BaseConcatDataset
 from braindecode.datautil.preprocess import preprocess, Preprocessor, exponential_moving_standardize
-from braindecode.augmentation import Mixup, Mixup_class
+# from braindecode.augmentation import Mixup, Mixup_class
 from torchvision.transforms import Normalize
 from braindecode.augmentation import AugmentedDataLoader, SignFlip, IdentityTransform, ChannelsDropout, FrequencyShift, ChannelsShuffle, SmoothTimeMask, BandstopFilter 
 
@@ -653,7 +653,7 @@ def train_TUHEEG_pathology(model_name,
 
         model = TCN(
             n_in_chans=n_chans, n_outputs=n_classes,
-            n_filters=16,
+            n_filters=55,
             n_blocks=5,
             kernel_size=16,
             drop_prob=drop_prob,
@@ -744,7 +744,7 @@ def train_TUHEEG_pathology(model_name,
             BandstopFilter(probability=.1, sfreq=sfreq),
             ChannelsShuffle(probability=.1),
             # Mixup(alpha=.1),
-            # Mixup_class(alpha=.1),
+            # Mixup_class(alpha=.5),
             # scale_norm(1.,mean, std),
         ]
     else:
@@ -841,7 +841,7 @@ def train_TUHEEG_pathology(model_name,
     # wandb.run.summary["loss_tuh"] = loss_tuh
     # wandb.run.summary["loss_nmt"] = loss_nmt
     if ids_to_load_train2 < 25:
-        print("ids_to_load_train2 < 25 and returing results before training")
+        print("ids_to_load_train < 25 and returing results before training")
         return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
 
 

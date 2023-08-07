@@ -7,6 +7,7 @@ sys.path.insert(0, "./code/")
 
 from train_tuheeg_pathology_balanced_saturation_finalrun_mj  import train_TUHEEG_pathology 
 
+from misc import defualt_parser
 
 def main():
     # create a parser object
@@ -30,10 +31,13 @@ def main():
     parser.add_argument( "--pre_trained", default=False ,type=bool, help="pre trained or not")
     parser.add_argument( "--load_path", default=None ,type=str, help="load path")
     parser.add_argument( "--augment", default=False ,type=bool, help="augment or not")
+    parser.add_argument( "--use_defualt_parser", default=False ,type=bool, help="use defualt parser or not")
 
     # parse the arguments
     args = parser.parse_args()
 
+    if args.use_defualt_parser:
+        args = defualt_parser(args)
 
     ## add wandb ##
     # Install wandb
@@ -43,7 +47,8 @@ def main():
     # Create a wandb Run
     wandb_run = wandb.init(
         # Set the project where this run will be logged
-        project="tuh_sc_hps_pp3_cp",
+        # project="nmt_WN_hps_2100",
+        project="tuh_scaling_woN_WoAug_DefArgs",
         name=args.task_name,
         # Track hyperparameters and run metadata
         config= vars(args),
