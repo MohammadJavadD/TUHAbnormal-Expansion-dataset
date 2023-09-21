@@ -4,23 +4,131 @@ import pandas as pd
 import torch
 import torch.utils.data
 import torchvision
+import torch
+from torch import nn
+
+# Authors: Lukas Gemein <l.gemein@gmail.com>
+#          Robin Schirrmeister <robintibor@gmail.com>
+#
+# License: BSD (3-clause)
+
+import numpy as np
+import pandas as pd
+import mne
+
+from braindecode.datasets.base import BaseDataset, BaseConcatDataset, WindowsDataset
+
+def create_from_mne_epochs(list_of_epochs, info, window_size_samples,
+                           window_stride_samples, drop_last_window):
+    """Create WindowsDatasets from mne.Epochs
+
+    Parameters
+    ----------
+    list_of_epochs: array-like
+        list of mne.Epochs
+    window_size_samples: int
+        window size
+    window_stride_samples: int
+        stride between windows
+    drop_last_window: bool
+        whether or not have a last overlapping window, when
+        windows do not equally divide the continuous signal
+
+    Returns
+    -------
+    windows_datasets: BaseConcatDataset
+        X and y transformed to a dataset format that is compativle with skorch
+        and braindecode
+    """
+    # Prevent circular import
+    from braindecode.preprocessing.windowers import _check_windowing_arguments
+    _check_windowing_arguments(0, 0, window_size_samples,
+                               window_stride_samples)
+
+    list_of_windows_ds = []
+    for epochs_i, epochs in enumerate(list_of_epochs):
+        event_descriptions = epochs.events[:, 2]
+        original_trial_starts = epochs.events[:, 0]
+        stop = len(epochs.times) - window_size_samples
+
+        # already includes last incomplete window start
+        starts = np.arange(0, stop + 1, window_stride_samples)
+
+        if not drop_last_window and starts[-1] < stop:
+            # if last window does not end at trial stop, make it stop there
+            starts = np.append(starts, stop)
+
+        fake_events = [[start, window_size_samples, -1] for start in
+                       starts]
+
+        for trial_i, trial in enumerate(epochs):
+            metadata = pd.DataFrame({
+                'i_window_in_trial': np.arange(len(fake_events)),
+                'i_start_in_trial': starts + original_trial_starts[trial_i],
+                'i_stop_in_trial': starts + original_trial_starts[
+                    trial_i] + window_size_samples,
+                'target': len(fake_events) * [event_descriptions[trial_i]],
+                'subject':info[trial_i][0],
+                'run':info[trial_i][1],
+                 'trial':trial_i,
+            })
+            # window size - 1, since tmax is inclusive
+            mne_epochs = mne.Epochs(
+                mne.io.RawArray(trial, epochs.info), fake_events,
+                baseline=None,
+                tmin=0,
+                tmax=(window_size_samples - 1) / epochs.info["sfreq"],
+                metadata=metadata)
+
+            mne_epochs.drop_bad(reject=None, flat=None)
+
+            windows_ds = WindowsDataset(mne_epochs, description={'subject':info[epochs_i][0],'run':info[epochs_i][1], 'trial':trial_i})
+            list_of_windows_ds.append(windows_ds)
+
+    return BaseConcatDataset(list_of_windows_ds)
+
+class CroppedLoss_sd(nn.Module):
+    """Compute Loss after averaging predictions across time.
+    Assumes predictions are in shape:
+    n_batch size x n_classes x n_predictions (in time)"""
+
+    def __init__(self, loss_function):
+        super().__init__()
+        self.loss_function = loss_function
+        self.sd_reg = 0.0
+
+    def forward(self, preds, targets):
+        """Forward pass.
+
+        Parameters
+        ----------
+        preds: torch.Tensor
+            Model's prediction with shape (batch_size, n_classes, n_times).
+        targets: torch.Tensor
+            Target labels with shape (batch_size, n_classes, n_times).
+        """
+        avg_preds = torch.mean(preds, dim=2)
+        avg_preds = avg_preds.squeeze(dim=1)
+        penalty = (avg_preds ** 2).mean()
+
+        return self.loss_function(avg_preds, targets) + self.sd_reg * penalty
 
 def defualt_parser(args):
     if args.model_name == 'EEGNet':
         args.drop_prob=0.25
-        args.lr=0.001
+        args.lr=0.0001
         args.weight_decay=0
     elif args.model_name == 'Deep4Net':
-        args.drop_prob=0.5
-        args.lr=0.01
-        args.weight_decay=0.0005
+        args.drop_prob=0.05
+        args.lr=0.001
+        args.weight_decay=0.00005
     elif  args.model_name == 'Shallow':
-        args.drop_prob=0.5
+        args.drop_prob=0.25
         args.lr=0.000625
         args.weight_decay=0
     elif args.model_name == 'TCN':
         args.drop_prob=0.05270154233150525
-        args.lr=0.0011261049710243193
+        args.lr=0.011261049710243193
         args.weight_decay=5.83730537673086e-07
     else:
         print("model name not found")
@@ -401,7 +509,7 @@ class CroppedLoss_org(nn.Module):
         avg_preds = avg_preds.squeeze(dim=1)
         return self.loss_function(avg_preds, targets)
     
-class CroppedLoss_sd(nn.Module):
+class CroppedLoss_coral(nn.Module):
     """Compute Loss after averaging predictions across time.
     Assumes predictions are in shape:
     n_batch size x n_classes x n_predictions (in time)"""
