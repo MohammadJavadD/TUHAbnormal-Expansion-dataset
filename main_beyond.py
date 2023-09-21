@@ -48,7 +48,7 @@ def main():
     wandb_run = wandb.init(
         # Set the project where this run will be logged
         # project="nmt_WN_hps_2100",
-        project="tuh_scaling_woN_WoAug_DefArgs",
+        project="CAE_diff_cls",
         name=args.task_name,
         # Track hyperparameters and run metadata
         config= vars(args),
@@ -85,7 +85,7 @@ def main():
     # if args.ids_to_load_train2 is not None:
     #     args.ids_to_load_train2 = range (args.ids_to_load_train2)
 
-    b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = train_TUHEEG_pathology(
+    b_acc_merge, loss_merge = train_TUHEEG_pathology(
                         model_name= args.model_name,
                         task_name = args.task_name,
                         drop_prob= args.drop_prob,
@@ -107,11 +107,11 @@ def main():
                         wandb_run = wandb_run
                         )
     wandb.run.summary["loss_merge"] = loss_merge
-    wandb.run.summary["loss_tuh"] = loss_tuh
-    wandb.run.summary["loss_nmt"] = loss_nmt
+    # wandb.run.summary["loss_tuh"] = loss_tuh
+    # wandb.run.summary["loss_nmt"] = loss_nmt
     wandb.run.summary["b_acc_merge"] = b_acc_merge
-    wandb.run.summary["b_acc_tuh"] = b_acc_tuh
-    wandb.run.summary["b_acc_nmt"] = b_acc_nmt
+    # wandb.run.summary["b_acc_tuh"] = b_acc_tuh
+    # wandb.run.summary["b_acc_nmt"] = b_acc_nmt
 if __name__ == "__main__":
     main()
 

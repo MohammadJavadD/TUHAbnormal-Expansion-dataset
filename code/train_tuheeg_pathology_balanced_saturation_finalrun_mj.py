@@ -26,6 +26,9 @@ from torch.utils.data import WeightedRandomSampler
 from braindecode import EEGClassifier
 from braindecode.training.losses import CroppedLoss
 CroppedLoss.reduction = "mean"
+from misc import CroppedLoss_sd
+CroppedLoss_sd.reduction = "mean"
+
 from skorch.scoring import loss_scoring
 from braindecode.models import Deep4Net,ShallowFBCSPNet,EEGNetv4, TCN
 from braindecode.util import set_random_seeds
@@ -37,7 +40,7 @@ from braindecode.datautil.serialization import  load_concat_dataset
 
 from braindecode.datasets import BaseConcatDataset
 from braindecode.datautil.preprocess import preprocess, Preprocessor, exponential_moving_standardize
-# from braindecode.augmentation import Mixup, Mixup_class
+from braindecode.augmentation import Mixup, Mixup_class
 from torchvision.transforms import Normalize
 from braindecode.augmentation import AugmentedDataLoader, SignFlip, IdentityTransform, ChannelsDropout, FrequencyShift, ChannelsShuffle, SmoothTimeMask, BandstopFilter 
 
@@ -599,7 +602,7 @@ def train_TUHEEG_pathology(model_name,
 
     n_classes=2
     # Extract number of chans from dataset
-    n_chans = 21
+    n_chans = 15
     input_window_samples =6000
     if model_name == 'Deep4Net':
         n_start_chans = 25
@@ -717,6 +720,38 @@ def train_TUHEEG_pathology(model_name,
     window_val_set.__setattr__('transform', scale_01(probability=1))
     window_test_set.__setattr__('transform', scale_01(probability=1))
 
+    ## limit n_channels to 15 common 
+    common_ch = sorted(['C4', 'P3', 'F4', 'F8', 'Fp2', 'C3', 'Fz', 'Fp1', 'Cz', 'P4', 'O1', 'O2', 'F3', 'F7', 'Pz'])
+    common_ch = sorted(['C4', 'P3', 'F4', 'F8', 'FP2', 'C3', 'FZ', 'FP1', 'CZ', 'P4', 'O1', 'O2', 'F3', 'F7', 'PZ'])
+    from braindecode.preprocessing import (
+        preprocess, Preprocessor, scale as multiply)
+    preprocessors = [
+        Preprocessor('pick_channels', ch_names=common_ch, ordered=True),
+    ]
+    window_train_set = preprocess(
+    concat_ds=window_train_set,
+    preprocessors=preprocessors,
+    n_jobs=1,
+    # save_dir='./',
+    overwrite=True,
+    )
+
+    window_val_set = preprocess(
+    concat_ds=window_val_set,
+    preprocessors=preprocessors,
+    n_jobs=1,
+    # save_dir='./',
+    overwrite=True,
+    )
+
+    window_test_set = preprocess(
+    concat_ds=window_test_set,
+    preprocessors=preprocessors,
+    n_jobs=1,
+    # save_dir='./',
+    overwrite=True,
+    )
+    ##
     #del  train_set
     print('abnormal train ' + str(len(window_train_set.description[window_train_set.description['pathological']==1])))
     print('normal train ' + str(len(window_train_set.description[window_train_set.description['pathological']==0])))
@@ -758,9 +793,7 @@ def train_TUHEEG_pathology(model_name,
     from torch.optim import swa_utils
     from misc import StochasticWeightAveraging
     ## end of SWA parameters ##
-    ## OOD methods ##
-    from misc import CroppedLoss_sd
-    ## end of OOD methods ##
+
 
     ## edit clf for multi-target ds ##
     # labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset)
@@ -788,6 +821,36 @@ def train_TUHEEG_pathology(model_name,
         # print('pre-trained model loaded')
         # clf.initialize() # This is important!
 
+    ## edit param groups
+    param_groups = [name for name, param in model.named_parameters()]
+    # print(param_groups)
+    param_groups.reverse()
+    prev_group_name = param_groups[0].split('.')[-2]
+    optimizer__param_groups = []
+    lr = lr
+    if pre_trained:
+        lr_mult = 0.50 #0.9
+    else:
+        lr_mult = 1
+
+    for idx, name in enumerate(param_groups):
+        # parameter group name
+        cur_group_name = name.split('.')[-2]
+    
+        # update learning rate
+        if cur_group_name != prev_group_name:
+            lr *= lr_mult
+            # if idx<len(param_groups)/2:
+            #     lr *= lr_mult
+            # else:
+            #     lr /= lr_mult
+            prev_group_name = cur_group_name
+
+        optimizer__param_groups.append((name, {'lr': lr}))
+        # lr = lr * lr_mult
+    optimizer__param_groups.reverse()
+    print(optimizer__param_groups)
+    ## end of param group
 
     clf = EEGClassifier(
                     model,
@@ -802,6 +865,7 @@ def train_TUHEEG_pathology(model_name,
                     # criterion=CroppedLoss_sd,
                     criterion__loss_function=torch.nn.functional.nll_loss,
                     optimizer=torch.optim.AdamW,
+                    optimizer__param_groups=optimizer__param_groups,
                     train_split=predefined_split(window_val_set),
                     optimizer__lr=lr,
                     optimizer__weight_decay=weight_decay,
@@ -840,7 +904,7 @@ def train_TUHEEG_pathology(model_name,
     # wandb.run.summary["loss_merge"] = loss_merge
     # wandb.run.summary["loss_tuh"] = loss_tuh
     # wandb.run.summary["loss_nmt"] = loss_nmt
-    if ids_to_load_train2 < 25:
+    if ids_to_load_train < 25:
         print("ids_to_load_train < 25 and returing results before training")
         return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
 
