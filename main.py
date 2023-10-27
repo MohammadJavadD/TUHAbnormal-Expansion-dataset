@@ -32,11 +32,14 @@ def main():
     parser.add_argument( "--load_path", default=None ,type=str, help="load path")
     parser.add_argument( "--augment", default=False ,type=bool, help="augment or not")
     parser.add_argument( "--use_defualt_parser", default=False ,type=bool, help="use defualt parser or not")
-
+    parser.add_argument( "--n_tcn_blocks", default=4  ,type=int, help="data folder")
+    parser.add_argument( "--n_tcn_filters", default=55  ,type=int, help="data folder")
+    parser.add_argument( "--project_name", default="APD_revised_CpLoss" ,type=str, help="project name")
     # parse the arguments
     args = parser.parse_args()
 
     if args.use_defualt_parser:
+        print("use defualt parser")
         args = defualt_parser(args)
 
     ## add wandb ##
@@ -48,7 +51,8 @@ def main():
     wandb_run = wandb.init(
         # Set the project where this run will be logged
         # project="nmt_WN_hps_2100",
-        project="tuh_scaling_woN_WoAug_DefArgs",
+        # project="tuh_scaling_woN_WoAug_DefArgs",
+        project=args.project_name,
         name=args.task_name,
         # Track hyperparameters and run metadata
         config= vars(args),
@@ -104,6 +108,8 @@ def main():
                         pre_trained = args.pre_trained,
                         load_path = args.load_path,
                         augment = args.augment,
+                        n_tcn_blocks = args.n_tcn_blocks,
+                        n_tcn_filters = args.n_tcn_filters,
                         wandb_run = wandb_run
                         )
     wandb.run.summary["loss_merge"] = loss_merge

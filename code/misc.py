@@ -128,7 +128,11 @@ def defualt_parser(args):
         args.weight_decay=0
     elif args.model_name == 'TCN':
         args.drop_prob=0.05270154233150525
-        args.lr=0.011261049710243193
+        args.lr=0.0011261049710243193
+        args.weight_decay=5.83730537673086e-07
+    elif args.model_name == 'TCN_var':
+        args.drop_prob=0.05270154233150525
+        args.lr=0.0011261049710243193
         args.weight_decay=5.83730537673086e-07
     else:
         print("model name not found")
@@ -309,6 +313,55 @@ from skorch.callbacks import Callback
 from braindecode.augmentation import Transform
 from torchvision.transforms.functional import normalize
 from braindecode.augmentation import Transform
+
+
+
+def return_fft_f(X, y):
+    """normalize ds to mean and std operation.
+
+    Parameters
+    ----------
+    X : torch.Tensor
+        EEG input example or batch.
+    y : torch.Tensor
+        EEG labels for the example or batch.
+
+    Returns
+    -------
+    torch.Tensor
+        Transformed inputs.
+    torch.Tensor
+        Transformed labels.
+    """
+    X = torch.abs(torch.fft.fft(X, dim=-1))
+
+    return X, y
+
+class return_fft(Transform):
+    """scale each input with a given probability.
+
+    Parameters
+    ----------
+    probability : float
+        Float setting the probability of applying the operation.
+    random_state: int | numpy.random.Generator, optional
+        Seed to be used to instantiate numpy random number generator instance.
+        Used to decide whether or not to transform given the probability
+        argument. Defaults to None.
+    """
+    operation = staticmethod(return_fft_f)
+
+    def __init__(
+        self,
+        probability,
+        random_state=None
+    ):
+        super().__init__(
+            probability=probability,
+            random_state=random_state
+        )
+
+
 
 def scale_01_f(X, y):
     """normalize ds to mean and std operation.
@@ -587,3 +640,18 @@ class new_ds(torch.utils.data.Dataset):
         # print(self.external_dataset.get_metadata().dataset.iloc[i])
         di = self.domains.iloc[i]
         return Xi, (yi, di), indi #yi
+    
+
+if __name__ == '__main__':
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    x = torch.randn([8, 15, 3000])
+    x = x.to(device)
+    print(x.shape, x.device)
+    # x = torch.unsqueeze(x, dim=1)
+    print(x.shape)
+    cfg = 10
+    # model = Sim_CNN(cfg)
+    model = sim_gpt(cfg)
+    model.to(device)
+    y = model(x)
+    print(y.shape)

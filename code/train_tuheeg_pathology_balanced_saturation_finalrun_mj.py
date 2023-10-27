@@ -1,6 +1,7 @@
 import time
 import os
 import mne
+from sympy import N
 mne.set_log_level('ERROR')
 
 from skorch.callbacks import WandbLogger
@@ -40,13 +41,15 @@ from braindecode.datautil.serialization import  load_concat_dataset
 
 from braindecode.datasets import BaseConcatDataset
 from braindecode.datautil.preprocess import preprocess, Preprocessor, exponential_moving_standardize
-from braindecode.augmentation import Mixup, Mixup_class
+# from braindecode.augmentation import Mixup, Mixup_class
 from torchvision.transforms import Normalize
-from braindecode.augmentation import AugmentedDataLoader, SignFlip, IdentityTransform, ChannelsDropout, FrequencyShift, ChannelsShuffle, SmoothTimeMask, BandstopFilter 
+from braindecode.augmentation import AugmentedDataLoader, SignFlip, IdentityTransform, ChannelsDropout, FrequencyShift, ChannelsShuffle, SmoothTimeMask, BandstopFilter, GaussianNoise
 
 
 from braindecode.training import trial_preds_from_window_preds
 
+from braindecode.augmentation import Transform
+import random 
 
 from functools import partial 
 from skorch.callbacks import LRScheduler, EarlyStopping,Checkpoint, EpochScoring
@@ -390,6 +393,9 @@ def print_single_ds_performance(clf, test_set):
     test_y = test_set_nmt.get_metadata().target.to_numpy()
     y_true =test_y#[:,0]
     b_acc_nmt = balanced_accuracy_score(np.array(y_true), clf.predict(test_X))
+    # import pandas as pd
+    # class_stats = pd.Series(test_y).value_counts()
+    # print('class_stats:', class_stats)
     loss_nmt = loss_scoring (clf,test_X,test_y) 
     print('loss_nmt:', loss_nmt)
     print('B_acc_nmt:', b_acc_nmt)
@@ -426,6 +432,8 @@ def train_TUHEEG_pathology(model_name,
                     load_path = None,
                     train_folder2 = None,
                     augment = False,
+                    n_tcn_blocks = 5,
+                    n_tcn_filters = 55,
                     ids_to_load_train2=None,
                     wandb_run = None,
                     ):
@@ -602,7 +610,7 @@ def train_TUHEEG_pathology(model_name,
 
     n_classes=2
     # Extract number of chans from dataset
-    n_chans = 15
+    n_chans = 21
     input_window_samples =6000
     if model_name == 'Deep4Net':
         n_start_chans = 25
@@ -660,14 +668,37 @@ def train_TUHEEG_pathology(model_name,
             n_blocks=5,
             kernel_size=16,
             drop_prob=drop_prob,
-            add_log_softmax=True)
-
+            add_log_softmax=True,
+#            n_times=input_window_samples)
+)
             # Send model to GPU
         if cuda:
             model.cuda()
 
         n_preds_per_input = get_output_shape(model, n_chans, input_window_samples)[2]
 
+    elif model_name == 'TCN_var':  
+        n_chan_factor = 2
+        stride_before_pool = True
+        input_window_samples =6000
+        l2_decay = 1.7491630095065614e-08
+        gradient_clip = 0.25
+
+        model = TCN(
+            n_in_chans=n_chans, n_outputs=n_classes,
+            n_filters=n_tcn_filters, #was 55 before
+            n_blocks=n_tcn_blocks,# was 5 before
+            kernel_size=16,
+            drop_prob=drop_prob,
+            add_log_softmax=True,
+            # n_times=input_window_samples
+            )
+
+            # Send model to GPU
+        if cuda:
+            model.cuda()
+
+        n_preds_per_input = get_output_shape(model, n_chans, input_window_samples)[2]
         
 
  
@@ -720,38 +751,38 @@ def train_TUHEEG_pathology(model_name,
     window_val_set.__setattr__('transform', scale_01(probability=1))
     window_test_set.__setattr__('transform', scale_01(probability=1))
 
-    ## limit n_channels to 15 common 
-    common_ch = sorted(['C4', 'P3', 'F4', 'F8', 'Fp2', 'C3', 'Fz', 'Fp1', 'Cz', 'P4', 'O1', 'O2', 'F3', 'F7', 'Pz'])
-    common_ch = sorted(['C4', 'P3', 'F4', 'F8', 'FP2', 'C3', 'FZ', 'FP1', 'CZ', 'P4', 'O1', 'O2', 'F3', 'F7', 'PZ'])
-    from braindecode.preprocessing import (
-        preprocess, Preprocessor, scale as multiply)
-    preprocessors = [
-        Preprocessor('pick_channels', ch_names=common_ch, ordered=True),
-    ]
-    window_train_set = preprocess(
-    concat_ds=window_train_set,
-    preprocessors=preprocessors,
-    n_jobs=1,
-    # save_dir='./',
-    overwrite=True,
-    )
+    # ## limit n_channels to 15 common 
+    # common_ch = sorted(['C4', 'P3', 'F4', 'F8', 'Fp2', 'C3', 'Fz', 'Fp1', 'Cz', 'P4', 'O1', 'O2', 'F3', 'F7', 'Pz'])
+    # common_ch = sorted(['C4', 'P3', 'F4', 'F8', 'FP2', 'C3', 'FZ', 'FP1', 'CZ', 'P4', 'O1', 'O2', 'F3', 'F7', 'PZ'])
+    # from braindecode.preprocessing import (
+    #     preprocess, Preprocessor, scale as multiply)
+    # preprocessors = [
+    #     Preprocessor('pick_channels', ch_names=common_ch, ordered=True),
+    # ]
+    # window_train_set = preprocess(
+    # concat_ds=window_train_set,
+    # preprocessors=preprocessors,
+    # n_jobs=1,
+    # # save_dir='./',
+    # overwrite=True,
+    # )
 
-    window_val_set = preprocess(
-    concat_ds=window_val_set,
-    preprocessors=preprocessors,
-    n_jobs=1,
-    # save_dir='./',
-    overwrite=True,
-    )
+    # window_val_set = preprocess(
+    # concat_ds=window_val_set,
+    # preprocessors=preprocessors,
+    # n_jobs=1,
+    # # save_dir='./',
+    # overwrite=True,
+    # )
 
-    window_test_set = preprocess(
-    concat_ds=window_test_set,
-    preprocessors=preprocessors,
-    n_jobs=1,
-    # save_dir='./',
-    overwrite=True,
-    )
-    ##
+    # window_test_set = preprocess(
+    # concat_ds=window_test_set,
+    # preprocessors=preprocessors,
+    # n_jobs=1,
+    # # save_dir='./',
+    # overwrite=True,
+    # )
+    # ##
     #del  train_set
     print('abnormal train ' + str(len(window_train_set.description[window_train_set.description['pathological']==1])))
     print('normal train ' + str(len(window_train_set.description[window_train_set.description['pathological']==0])))
@@ -769,19 +800,56 @@ def train_TUHEEG_pathology(model_name,
         # scale_norm(1.,mean, std),
     ]
 
+
+    class Compose_RandAug(Transform):
+        """Transform composition.
+
+        Callable class allowing to cast a sequence of Transform objects into a
+        single one.
+
+        Parameters
+        ----------
+        transforms: list
+            Sequence of Transforms to be composed.
+        """
+
+        def __init__(self, transforms, n=2, m=0.5):
+            self.transforms = transforms
+            self.n = n
+            self.m = m
+            super().__init__()
+
+        def forward(self, X, y):
+            # randomly choose two transforms from the list
+            transforms = random.sample(self.transforms, k=self.n)
+            # print('transforms_train', transforms)
+            # print(X.shape,"X")
+            for transform in transforms:
+                X, y = transform(X, y)
+            return X, y
+        
+    from braindecode.augmentation import (FTSurrogate, 
+    )
+
+    m = 0.5
     if augment:
-        transforms_train = [
+        transforms_train_pool = [
             IdentityTransform(),
             SignFlip(probability=.1),
             ChannelsDropout(probability=.1, p_drop=.2),
             FrequencyShift(probability=.1, sfreq=sfreq, max_delta_freq=2),
             SmoothTimeMask(probability=.1, mask_len_samples=600),
-            BandstopFilter(probability=.1, sfreq=sfreq),
+            BandstopFilter(probability=.1, sfreq=sfreq, bandwidth=5),
             ChannelsShuffle(probability=.1),
+            GaussianNoise(probability=.1, std=.2),
+            FTSurrogate(probability=.1),
             # Mixup(alpha=.1),
             # Mixup_class(alpha=.5),
             # scale_norm(1.,mean, std),
         ]
+        # randomly choose two transforms from the list
+        # transforms_train = Compose_RandAug(transforms_train, n=2, m=0.5)
+        transforms_train = Compose_RandAug(transforms_train_pool, n=8, m=0.5)
     else:
         transforms_train = transforms_val
     ## end of data augmentation ##
@@ -805,16 +873,29 @@ def train_TUHEEG_pathology(model_name,
 
     ## add checkpoint ##
     from skorch.callbacks import Checkpoint
+    import datetime
+    now = datetime.datetime.now()
+    f_params_name = 'best_model_params_'+str(now)+'.pt'
+    print(f_params_name)
 
     checkpoint = Checkpoint(
         dirname=result_path,
-        monitor='valid_balanced_accuracy_best'
+        f_params=f_params_name,
+      monitor='valid_balanced_accuracy_best'
       )
+
 
     if pre_trained:
         state_dicts = torch.load(load_path)# +'state_dict_2023.pt')
         model.load_state_dict(state_dicts, strict= False)
         print('pre-trained model loaded using pytorch')
+
+        ## freeze layers ##
+        for ii, (name, param) in enumerate(model.named_parameters()):
+            if 'temporal_block_0' in name or 'temporal_block_1' in name or 'temporal_block_2' in name or 'temporal_block_3' in name: # or 'temporal_block_5' in name or 'conv_classifier' in name:
+                param.requires_grad = False
+                print('param:', name, param.requires_grad)
+
         # clf.load_params(
         #     f_params=load_path +'state_dict_2023.pt')#, f_optimizer= load_path +'opt.pkl', f_history=load_path +'history.json')
         #     # f_params=load_path +'model.pkl')#, f_optimizer= load_path +'opt.pkl', f_history=load_path +'history.json')
@@ -829,7 +910,7 @@ def train_TUHEEG_pathology(model_name,
     optimizer__param_groups = []
     lr = lr
     if pre_trained:
-        lr_mult = 0.50 #0.9
+        lr_mult = 0.9 #0.9
     else:
         lr_mult = 1
 
@@ -852,6 +933,13 @@ def train_TUHEEG_pathology(model_name,
     print(optimizer__param_groups)
     ## end of param group
 
+    window_test_set.set_description({
+        "dataset": ['Nmt' if (type(d) == float and np.isnan(d)) else 'Tuh' for d in window_test_set.description['version']]},overwrite=True)
+
+    test_set_tuh = window_test_set.split('dataset')['Tuh']
+    test_set_nmt = window_test_set.split('dataset')['Nmt']
+    
+
     clf = EEGClassifier(
                     model,
                     cropped=True,
@@ -867,6 +955,7 @@ def train_TUHEEG_pathology(model_name,
                     optimizer=torch.optim.AdamW,
                     optimizer__param_groups=optimizer__param_groups,
                     train_split=predefined_split(window_val_set),
+                    # train_split=predefined_split(test_set_nmt),
                     optimizer__lr=lr,
                     optimizer__weight_decay=weight_decay,
                     iterator_train__shuffle=False,
@@ -904,9 +993,9 @@ def train_TUHEEG_pathology(model_name,
     # wandb.run.summary["loss_merge"] = loss_merge
     # wandb.run.summary["loss_tuh"] = loss_tuh
     # wandb.run.summary["loss_nmt"] = loss_nmt
-    if ids_to_load_train < 25:
-        print("ids_to_load_train < 25 and returing results before training")
-        return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
+    # if ids_to_load_train2 < 25:
+    #     print("ids_to_load_train < 25 and returing results before training")
+    #     return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
 
 
     ### end of eval ###
