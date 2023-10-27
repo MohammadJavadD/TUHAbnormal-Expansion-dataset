@@ -2,3 +2,12 @@ slurm-*
 *.out
 */__pycache__/*
 *.pyc
+logs*/*
+**/wandb/*
+output*
+.vscode/*
+*.pt
+*.png
+*.sh
+*.svg
+*.csv
