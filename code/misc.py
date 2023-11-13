@@ -14,9 +14,64 @@ from torch import nn
 
 import numpy as np
 import pandas as pd
+from mne_bids import BIDSPath, read_raw_bids
 import mne
+import os
 
+# from code.nmt_tuh_load_pp import N_JOBS
+mne.set_log_level('ERROR') 
 from braindecode.datasets.base import BaseDataset, BaseConcatDataset, WindowsDataset
+
+def load_beyond_ds(beyond_path, subject_ids, N_JOBS=-1):
+        # with io.capture_output() as captured:
+    # Load your EEG BIDS dataset using mne-bids
+
+    # bids_root = "../../CAE/BIDS_EXPORT/" # change this to your actual path
+    bids_root = beyond_path # change this to your actual path
+    # bids_root = train_folder # change this to your actual path
+    subject = "1" # change this to your subject ID
+    # session = "1" # change this to your subject ID
+    task = "unnamed" #"aviation"
+    run = "1"
+    n_runs = 2
+    #_eeg
+
+    # Path to your participants.tsv file
+    participants_tsv = os.path.join(bids_root , 'participants.tsv')
+
+    # Read the .tsv file using pandas
+    participants_df = pd.read_csv(participants_tsv, delimiter='\t')
+
+    bids_path = BIDSPath(subject=subject, task=task, run=run, root=bids_root)
+    bids_paths = [BIDSPath(subject=str(subject), task=task, run=str(run), root=bids_root) for subject in subject_ids for run in range(1,n_runs+1)]
+    info = [(bids_path.subject, bids_path.run, gender) for bids_path, gender in zip(bids_paths,participants_df['Gender'].repeat(n_runs))]
+
+    raw = mne.io.read_epochs_eeglab(bids_path)
+    sfreq = raw.info['sfreq']
+    raws_train = [mne.io.read_epochs_eeglab(bids_path) for bids_path in bids_paths]
+    for raw in raws_train:
+        raw.resample(sfreq=100)
+        raw.events[:,2] = raw.events[:,2] - 1
+
+    # Convert the epochs to braindecode format using braindecode.datautil.signal_target
+    from misc import create_from_mne_epochs
+
+    from braindecode.preprocessing import (
+        preprocess, Preprocessor, create_fixed_length_windows, scale as multiply)
+
+    # common_ch = sorted(['C4', 'P3', 'F4', 'F8', 'Fp2', 'C3', 'Fz', 'Fp1', 'Cz', 'P4', 'O1', 'O2', 'F3', 'F7', 'Pz'])
+    common_ch = sorted(['T7', 'T8', 'C5', 'C6', 'P5', 'P6', 'C4', 'P3', 'F4', 'F8', 'Fp2', 'C3', 'Fz', 'Fp1', 'Cz', 'P4', 'O1', 'O2', 'F3', 'F7', 'Pz'])
+    
+    preprocessors_beyond = [
+        # Preprocessor(standard_scale, channel_wise=True),
+        Preprocessor('pick_channels', ch_names=common_ch, ordered=True),
+        # Preprocessor('resample', sfreq=100),
+        # Preprocessor('filter', l_freq=None, h_freq=high_cut_hz, n_jobs=n_jobs)
+    ]
+
+    return raws_train, info, preprocessors_beyond
+
+    # return windows_dataset_Beyond
 
 def create_from_mne_epochs(list_of_epochs, info, window_size_samples,
                            window_stride_samples, drop_last_window):
@@ -70,6 +125,7 @@ def create_from_mne_epochs(list_of_epochs, info, window_size_samples,
                 'target': len(fake_events) * [event_descriptions[trial_i]],
                 'subject':info[trial_i][0],
                 'run':info[trial_i][1],
+                'gender':info[trial_i][2],
                  'trial':trial_i,
             })
             # window size - 1, since tmax is inclusive
@@ -82,7 +138,7 @@ def create_from_mne_epochs(list_of_epochs, info, window_size_samples,
 
             mne_epochs.drop_bad(reject=None, flat=None)
 
-            windows_ds = WindowsDataset(mne_epochs, description={'subject':info[epochs_i][0],'run':info[epochs_i][1], 'trial':trial_i})
+            windows_ds = WindowsDataset(mne_epochs, description={'subject':info[epochs_i][0],'run':info[epochs_i][1], 'trial':trial_i, 'gender':info[epochs_i][2]})
             list_of_windows_ds.append(windows_ds)
 
     return BaseConcatDataset(list_of_windows_ds)
@@ -116,14 +172,14 @@ class CroppedLoss_sd(nn.Module):
 def defualt_parser(args):
     if args.model_name == 'EEGNet':
         args.drop_prob=0.25
-        args.lr=0.0001
+        args.lr=0.001
         args.weight_decay=0
     elif args.model_name == 'Deep4Net':
-        args.drop_prob=0.05
-        args.lr=0.001
-        args.weight_decay=0.00005
+        args.drop_prob=0.5
+        args.lr=0.01
+        args.weight_decay=0.0005
     elif  args.model_name == 'Shallow':
-        args.drop_prob=0.25
+        args.drop_prob=0.5
         args.lr=0.000625
         args.weight_decay=0
     elif args.model_name == 'TCN':
@@ -380,10 +436,16 @@ def scale_01_f(X, y):
     torch.Tensor
         Transformed labels.
     """
-    # print(X.shape, X, y)
-    for ii in range(X.shape[0]):
-        X[ii,:] = (X[ii,:] - X[ii,:].min()) / (X[ii,:].max() - X[ii,:].min())
-    # # X = normalize (X.unsqueeze(dim=3),mean, std, inplace=False).squeeze()
+    # print(X.shape, X, y, X.min(), X.max())
+    # min = X.min()
+    # print(min.shape)
+    # exit()
+    # X = (X-X.min())/(X.max()-X.min()) #
+    # X = (X-X.min(-1, keepdim=True)[0])/ (X.max(-1, keepdim=True)[0]-X.min(-1, keepdim=True)[0])
+    X = 2 * (X - X.min(-1, keepdim=True)[0]) / (X.max(-1, keepdim=True)[0] - X.min(-1, keepdim=True)[0]) - 1
+    # for ii in range(X.shape[0]):
+    #     X[ii,:] = (X[ii,:] - X[ii,:].min()) / (X[ii,:].max() - X[ii,:].min())
+    # # # X = normalize (X.unsqueeze(dim=3),mean, std, inplace=False).squeeze()
 
     return X, y
 

@@ -2,9 +2,12 @@ import time
 import os
 import mne
 from sympy import N
+
+# from code.nmt_tuh_load_pp import N_JOBS
 mne.set_log_level('ERROR')
 
 from skorch.callbacks import WandbLogger
+
 
 from warnings import filterwarnings
 filterwarnings('ignore')
@@ -28,6 +31,7 @@ from braindecode import EEGClassifier
 from braindecode.training.losses import CroppedLoss
 CroppedLoss.reduction = "mean"
 from misc import CroppedLoss_sd
+from misc import StochasticWeightAveraging, load_beyond_ds
 CroppedLoss_sd.reduction = "mean"
 
 from skorch.scoring import loss_scoring
@@ -91,7 +95,8 @@ def plot_confusion_matrix_paper(confusion_mat, p_val_vs_a=None,
                                 with_f1_score=False,
                                 norm_axes=(0, 1),
                                 rotate_precision=False,
-                                class_names_fontsize=12):
+                                class_names_fontsize=12,
+                                ):
     
     # TODELAY: split into several functions
     # transpose to get confusion matrix same way as matlab
@@ -415,7 +420,28 @@ def print_single_ds_performance(clf, test_set):
 
     return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
     
-def train_TUHEEG_pathology(model_name,
+
+
+def print_single_ds_performance_beyond(clf, test_set):
+    
+    test_X = SliceDataset(test_set, idx=0)
+    # test_y = test_set.get_metadata().target.to_numpy()
+    test_y = test_set.get_metadata().gender_bool.to_numpy()
+    y_true =test_y#[:,0]
+    # print('test_X:', test_X.shape)
+    # print('test_y:', test_y)
+    b_acc_merge = balanced_accuracy_score(np.array(y_true), clf.predict(test_X))
+    loss_merge = None #loss_scoring (clf,test_X,test_y) 
+    print('loss_merge:', loss_merge)
+    print('B_acc_merged:', b_acc_merge)
+    b_acc_tuh, b_acc_nmt,loss_tuh,loss_nmt = None, None, None, None
+
+    return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
+    
+
+def train_TUHEEG_pathology(
+                    model_name,
+                    target_name,
                      drop_prob,
                      batch_size,
                      lr,
@@ -431,24 +457,29 @@ def train_TUHEEG_pathology(model_name,
                     pre_trained = False,
                     load_path = None,
                     train_folder2 = None,
+                    train_folder3 = None,
+                    train_folder4 = None,
                     augment = False,
                     n_tcn_blocks = 5,
                     n_tcn_filters = 55,
                     ids_to_load_train2=None,
+                    ids_to_load_train3=None,
+                    ids_to_load_train4=None,
                     wandb_run = None,
+                    N_JOBS=8
                     ):
 
     ###################################
-    target_name = None  # Comment Lukas our target is not supported by default, set None and add later 
-    add_physician_reports = True
+    # target_name = None  # Comment Lukas our target is not supported by default, set None and add later 
+    # add_physician_reports = True
 
     sfreq = 100  #100
-    n_minutes = 20 #
+    # n_minutes = 20 #
 
-    n_max_minutes = n_minutes+1
+    # n_max_minutes = n_minutes+1
     
     #Drop_prob = [drop_prob]
-    N_REPETITIONS =1
+    # N_REPETITIONS =1
     ####### MODEL DEFINITION ############
     torch.backends.cudnn.benchmark = True
     ######
@@ -478,27 +509,76 @@ def train_TUHEEG_pathology(model_name,
         ds_all = BaseConcatDataset([ds_all, ds_all2])
         # print('ds_all:', ds_all.description)
     train_set = ds_all.split('train')['True']
+    
+    ds_all3 = None
+    if train_folder3:
+        print('loading third train folder')
+        ids_to_load3 = None if ids_to_load_train3 is None else range(ids_to_load_train3)
+        ds_all3 = load_concat_dataset(train_folder3, preload=False,
+                              # target_name=['pathological','age','gender'] ,#)
+                              ids_to_load=ids_to_load3
+                              )
+        # print('merging datasets')
+        # ds_all = BaseConcatDataset([ds_all, ds_all2])
+    
+    ds_all4 = None
+    if train_folder4:
+        print('loading fourth train folder')
+        raws_train, info, preprocessors_beyond = load_beyond_ds(train_folder4, range(1,ids_to_load_train4), N_JOBS=N_JOBS)
+        ds_all4 = 1  
+        
+
 
     end = time.time()
 
     print('finished loading preprocessed trainset ' + str(end-start))
 
-    # print('train_set', train_set.description)
-    # x, y = train_set[-1]
-    # print('x:', x.shape)
-    # print('y:', y)
-    # print('ind:', ind)
 
-    target = train_set.description['pathological'].astype(int)
+    target= target_name
+    if target=='pathological':
+        target = ds_all.description['pathological'].astype(int)
+        for d, y in zip(ds_all.datasets, target):
+            d.description['pathological'] = y
+            d.target_name = 'pathological'
+            d.target = d.description[d.target_name]
+        ds_all.set_description(pd.DataFrame([d.description for d in ds_all.datasets]), overwrite=True)
+    elif target=='sex':
+        print("target is being set to sex clf")
+        # convert M F to 01
+        df = ds_all.description
+        df = df.assign(gender_bool=df['gender'].map(lambda x: 0 if x == 'M' else 1 if x == 'F' else None))
+        ds_all.set_description(df, overwrite=True)
 
+        #set target
+        target = ds_all.description['gender_bool'].astype(int)
+        for d, y in zip(ds_all.datasets, target):
+            d.description['gender_bool'] = y
+            d.target_name = 'gender_bool'
+            d.target = d.description[d.target_name]
+        ds_all.set_description(pd.DataFrame([d.description for d in ds_all.datasets]), overwrite=True)
 
+        if ds_all3:
+            ## do the same for tueg
+            # remove None values from the dataset
+            ds_all3_splitted = ds_all3.split('gender')
+            ds_all3 = BaseConcatDataset([ds_all3_splitted['M'], ds_all3_splitted['F']])
+            # convert M F to 01
+            df = ds_all3.description
+            df = df.assign(gender_bool=df['gender'].map(lambda x: 0 if x == 'M' else 1 if x == 'F' else None))
+            ds_all3.set_description(df, overwrite=True)
 
-    for d, y in zip(train_set.datasets, target):
-        d.description['pathological'] = y
-        d.target_name = 'pathological'
-        d.target = d.description[d.target_name]
-    train_set.set_description(pd.DataFrame([d.description for d in train_set.datasets]), overwrite=True)
-
+            #set target
+            target = ds_all3.description['gender_bool'].astype(int)
+            for d, y in zip(ds_all3.datasets, target):
+                d.description['gender_bool'] = y
+                d.target_name = 'gender_bool'
+                d.target = d.description[d.target_name]
+            ds_all3.set_description(pd.DataFrame([d.description for d in ds_all3.datasets]), overwrite=True)
+            print('ds_all3:', ds_all3.description)
+            x, y = ds_all3[-1]
+            print('x:', x.shape)
+            print('y:', y)
+        
 
         
     # load eval set
@@ -516,13 +596,13 @@ def train_TUHEEG_pathology(model_name,
 
     print('finished loading preprocessed trainset ' + str(end-start))
 
-    target = test_complete.description['pathological'].astype(int)
+    # target = test_complete.description['pathological'].astype(int)
     
-    for d, y in zip(test_complete.datasets, target):
-        d.description['pathological'] = y
-        d.target_name = 'pathological'
-        d.target = d.description[d.target_name]
-    test_complete.set_description(pd.DataFrame([d.description for d in test_complete.datasets]), overwrite=True)
+    # for d, y in zip(test_complete.datasets, target):
+    #     d.description['pathological'] = y
+    #     d.target_name = 'pathological'
+    #     d.target = d.description[d.target_name]
+    # test_complete.set_description(pd.DataFrame([d.description for d in test_complete.datasets]), overwrite=True)
     
     ## limit training set
     # print('train_set' , train_set.description)
@@ -555,7 +635,7 @@ def train_TUHEEG_pathology(model_name,
         elif ids_to_load_train2>0:
             train_set = BaseConcatDataset([train_set_nmt])
 
-        target = train_set.description['pathological'].astype(int)
+        # target = train_set.description['pathological'].astype(int)
         # dataset = pd.get_dummies(train_set.description['dataset'])['Tuh'].astype(int)
         # print(target, dataset)
         # for d, y, ds in zip(train_set.datasets, target, dataset):
@@ -584,6 +664,27 @@ def train_TUHEEG_pathology(model_name,
     val_set = train_set_splited['False']
     ## end of split trainset to val/train
 
+    if ds_all3:
+        ## add additional columns to ds_all3 description
+        df = ds_all3.description
+        df = df.assign(train=df['gender'].map(lambda x: True))
+        ds_all3.set_description(df, overwrite=True)
+        ## split trainset to val/train
+        a = ds_all3.description['train'].values
+        # choose 15 percent of the indices randomly
+        indices = np.random.choice(a.size, int(a.size * 0.15), replace=False)
+        # assign False to those indices
+        a[indices] = False
+        # print('a:', a)
+
+        ds_all3.set_description({
+            "train": [ii for ii in a]},overwrite=True)
+
+        ds_all3_splited = ds_all3.split('train')
+        ds_all3_train_set = ds_all3_splited['True']
+        ds_all3_val_set = ds_all3_splited['False']
+        print('ds_all3:', ds_all3_train_set.description)
+        ## end of split trainset to val/train
    
 
     print('model:',model_name)
@@ -721,7 +822,67 @@ def train_TUHEEG_pathology(model_name,
 
     print(model_name + ' model sent to cuda')
     print(model)
+    if ds_all4:
+        from misc import create_from_mne_epochs
+        windows_dataset_Beyond = create_from_mne_epochs(
+            raws_train,
+            info,
+            window_size_samples=input_window_samples,
+            window_stride_samples=n_preds_per_input,
+            drop_last_window=True,
+        )
 
+        windows_dataset_Beyond = preprocess(
+            concat_ds=windows_dataset_Beyond,
+            preprocessors=preprocessors_beyond,
+            n_jobs=N_JOBS,
+            # save_dir='./',
+            overwrite=True,
+        )
+
+        ## do the same for BEYOND
+        # remove None values from the dataset
+        windows_dataset_Beyond_splitted = windows_dataset_Beyond.split('gender')
+        windows_dataset_Beyond = BaseConcatDataset([windows_dataset_Beyond_splitted['M'], windows_dataset_Beyond_splitted['F']])
+        # convert M F to 01
+        df = windows_dataset_Beyond.description
+        df = df.assign(gender_bool=df['gender'].map(lambda x: 0 if x == 'M' else 1 if x == 'F' else None))
+        windows_dataset_Beyond.set_description(df, overwrite=True)
+
+        #set target
+        target = windows_dataset_Beyond.description['gender_bool'].astype(int)
+        for d, y in zip(windows_dataset_Beyond.datasets, target):
+            d.description['gender_bool'] = y
+            d.target_name = 'gender_bool'
+            d.target = d.description[d.target_name]
+        windows_dataset_Beyond.set_description(pd.DataFrame([d.description for d in windows_dataset_Beyond.datasets]), overwrite=True)
+        print('windows_dataset_Beyond:', windows_dataset_Beyond.description)
+        # x, y = windows_dataset_Beyond[-1]
+        # print('x:', x.shape)
+        # print('y:', y)
+    
+    if ds_all3:
+        with io.capture_output() as captured:
+            window_train_set_tueg = create_fixed_length_windows(ds_all3_train_set, 
+                                                            start_offset_samples=0,
+                                                            stop_offset_samples=None,
+                                                            preload=False,
+                                                            window_size_samples=input_window_samples,
+                                                            window_stride_samples=n_preds_per_input,
+                                                            drop_last_window=True,
+                                                            n_jobs=N_JOBS,
+                                                            # mapping={ False: 0, True: 1 , 'M': 0, 'F': 1 },  # map non-digit targets 'M': 0, 'F': 1,
+                                                            )
+        with io.capture_output() as captured:
+            window_val_set_tueg = create_fixed_length_windows(ds_all3_val_set, 
+                                                            start_offset_samples=0,
+                                                            stop_offset_samples=None,
+                                                            preload=True,
+                                                            window_size_samples=input_window_samples,
+                                                            window_stride_samples=n_preds_per_input,
+                                                            drop_last_window=True,
+                                                            # mapping={ False: 0, True: 1 , 'M': 0, 'F': 1 },  # map non-digit targets 'M': 0, 'F': 1,
+                                                            )
     with io.capture_output() as captured:
          window_train_set = create_fixed_length_windows(train_set, 
                                                         start_offset_samples=0,
@@ -750,7 +911,12 @@ def train_TUHEEG_pathology(model_name,
     window_train_set.__setattr__('transform', scale_01(probability=1))
     window_val_set.__setattr__('transform', scale_01(probability=1))
     window_test_set.__setattr__('transform', scale_01(probability=1))
-
+    if ds_all3:
+        window_train_set_tueg.__setattr__('transform', scale_01(probability=1))
+        window_val_set_tueg.__setattr__('transform', scale_01(probability=1))
+    if ds_all4:
+        windows_dataset_Beyond.__setattr__('transform', scale_01(probability=1))
+        
     # ## limit n_channels to 15 common 
     # common_ch = sorted(['C4', 'P3', 'F4', 'F8', 'Fp2', 'C3', 'Fz', 'Fp1', 'Cz', 'P4', 'O1', 'O2', 'F3', 'F7', 'Pz'])
     # common_ch = sorted(['C4', 'P3', 'F4', 'F8', 'FP2', 'C3', 'FZ', 'FP1', 'CZ', 'P4', 'O1', 'O2', 'F3', 'F7', 'PZ'])
@@ -784,6 +950,14 @@ def train_TUHEEG_pathology(model_name,
     # )
     # ##
     #del  train_set
+    if ds_all3:
+        print('Female train TUEG ' + str(len(window_train_set_tueg.description[window_train_set_tueg.description['gender_bool']==1])))
+        print('Male train TUEG ' + str(len(window_train_set_tueg.description[window_train_set_tueg.description['gender_bool']==0])))
+    if ds_all4:
+        print('Female train Beyond ' + str(len(windows_dataset_Beyond.description[windows_dataset_Beyond.description['gender_bool']==1])))
+        print('Male train Beyond ' + str(len(windows_dataset_Beyond.description[windows_dataset_Beyond.description['gender_bool']==0])))
+        
+    
     print('abnormal train ' + str(len(window_train_set.description[window_train_set.description['pathological']==1])))
     print('normal train ' + str(len(window_train_set.description[window_train_set.description['pathological']==0])))
 
@@ -836,20 +1010,20 @@ def train_TUHEEG_pathology(model_name,
         transforms_train_pool = [
             IdentityTransform(),
             SignFlip(probability=.1),
-            ChannelsDropout(probability=.1, p_drop=.2),
-            FrequencyShift(probability=.1, sfreq=sfreq, max_delta_freq=2),
+            # ChannelsDropout(probability=.1, p_drop=.2),
+            FrequencyShift(probability=.5, sfreq=sfreq, max_delta_freq=2),
             SmoothTimeMask(probability=.1, mask_len_samples=600),
-            BandstopFilter(probability=.1, sfreq=sfreq, bandwidth=5),
-            ChannelsShuffle(probability=.1),
-            GaussianNoise(probability=.1, std=.2),
-            FTSurrogate(probability=.1),
+            BandstopFilter(probability=.5, sfreq=sfreq, bandwidth=5),
+            # ChannelsShuffle(probability=.1),
+            GaussianNoise(probability=.5, std=.2),
+            FTSurrogate(probability=.5),
             # Mixup(alpha=.1),
             # Mixup_class(alpha=.5),
             # scale_norm(1.,mean, std),
         ]
         # randomly choose two transforms from the list
         # transforms_train = Compose_RandAug(transforms_train, n=2, m=0.5)
-        transforms_train = Compose_RandAug(transforms_train_pool, n=8, m=0.5)
+        transforms_train = Compose_RandAug(transforms_train_pool, n=3, m=0.5)
     else:
         transforms_train = transforms_val
     ## end of data augmentation ##
@@ -859,7 +1033,6 @@ def train_TUHEEG_pathology(model_name,
     
     ## SWA parameters ##
     from torch.optim import swa_utils
-    from misc import StochasticWeightAveraging
     ## end of SWA parameters ##
 
 
@@ -881,7 +1054,7 @@ def train_TUHEEG_pathology(model_name,
     checkpoint = Checkpoint(
         dirname=result_path,
         f_params=f_params_name,
-      monitor='valid_balanced_accuracy_best'
+        monitor='valid_balanced_accuracy_best'
       )
 
 
@@ -891,10 +1064,13 @@ def train_TUHEEG_pathology(model_name,
         print('pre-trained model loaded using pytorch')
 
         ## freeze layers ##
-        for ii, (name, param) in enumerate(model.named_parameters()):
-            if 'temporal_block_0' in name or 'temporal_block_1' in name or 'temporal_block_2' in name or 'temporal_block_3' in name: # or 'temporal_block_5' in name or 'conv_classifier' in name:
-                param.requires_grad = False
-                print('param:', name, param.requires_grad)
+        freez = False
+        if freez:
+            for ii, (name, param) in enumerate(model.named_parameters()):
+                # if 'temporal_block_0' in name or 'temporal_block_1' in name or 'temporal_block_2' in name or 'temporal_block_3' in name: # or 'temporal_block_5' in name or 'conv_classifier' in name:
+                if not 'conv_classifier' in name:
+                    param.requires_grad = False
+                    print('param:', name, param.requires_grad)
 
         # clf.load_params(
         #     f_params=load_path +'state_dict_2023.pt')#, f_optimizer= load_path +'opt.pkl', f_history=load_path +'history.json')
@@ -939,6 +1115,15 @@ def train_TUHEEG_pathology(model_name,
     test_set_tuh = window_test_set.split('dataset')['Tuh']
     test_set_nmt = window_test_set.split('dataset')['Nmt']
     
+    if ds_all3:
+        train_split = window_val_set_tueg #test_set_nmt #window_val_set_tueg [Carefull!]
+        iterator_train__shuffle = True
+        iterator_train__sampler = None #ImbalancedDatasetSampler(window_train_set_tueg, labels=window_train_set_tueg.get_metadata().target),#, dataset_label=window_train_set_tueg.get_metadata().dataset),                    
+    else:
+        train_split = window_val_set
+        iterator_train__sampler = ImbalancedDatasetSampler(window_train_set, labels=window_train_set.get_metadata().target)
+        # iterator_train__sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset),
+        iterator_train__shuffle = False
 
     clf = EEGClassifier(
                     model,
@@ -954,14 +1139,16 @@ def train_TUHEEG_pathology(model_name,
                     criterion__loss_function=torch.nn.functional.nll_loss,
                     optimizer=torch.optim.AdamW,
                     optimizer__param_groups=optimizer__param_groups,
-                    train_split=predefined_split(window_val_set),
-                    # train_split=predefined_split(test_set_nmt),
+                    train_split=predefined_split(train_split), 
+                    # train_split=predefined_split(window_val_set_tueg),
                     optimizer__lr=lr,
                     optimizer__weight_decay=weight_decay,
-                    iterator_train__shuffle=False,
+                    iterator_train__shuffle=iterator_train__shuffle,
+                    iterator_train__sampler = iterator_train__sampler,
                     # iterator_train__sampler = ImbalancedDatasetSampler(window_train_set, labels=window_train_set.get_metadata().target),
-                    iterator_train__sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset),
+                    # iterator_train__sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset),
                     # iterator_valid__sampler = ImbalancedDatasetSampler_with_ds(window_val_set, labels=window_val_set.get_metadata().target, dataset_label=window_val_set.get_metadata().dataset),
+                    # iterator_train__sampler = ImbalancedDatasetSampler(window_train_set_tueg, labels=window_train_set_tueg.get_metadata().target),#, dataset_label=window_train_set_tueg.get_metadata().dataset),                    
                     batch_size=batch_size,
                     callbacks=[
                         # EarlyStopping(patience=5),
@@ -1006,7 +1193,11 @@ def train_TUHEEG_pathology(model_name,
 
 
     # Model training for a specified number of epochs. `y` is None as it is already supplied
-    clf.fit(window_train_set, y=None, epochs=n_epochs)
+    if ds_all3:
+        clf.fit(window_train_set_tueg, y=None, epochs=n_epochs)
+    else:
+        clf.fit(window_train_set, y=None, epochs=n_epochs)
+
     print('end training')
 
     ## load the best model
@@ -1018,8 +1209,22 @@ def train_TUHEEG_pathology(model_name,
     ### end of eval ###
     ####### EVAL ############
     # if train_folder2:
-    b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = print_single_ds_performance(clf, window_test_set)
-    save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt)
+
+    if ds_all3:
+        print('Evaluating after training on TUAB and NMT train sets')
+        b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = print_single_ds_performance(clf, window_test_set)
+        save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt)
+    elif ds_all4:
+        print('Evaluating after training on Beyond  datasets')
+        b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = print_single_ds_performance_beyond(clf, windows_dataset_Beyond)
+        save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt)
+        print('Evaluating after training on TUAB and NMT train sets')
+        b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = print_single_ds_performance(clf, window_test_set)
+        save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt)
+    else:
+        print('Evaluating after training on TUAB and NMT test sets')
+        b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = print_single_ds_performance(clf, window_test_set)
+        save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt)
 
     ### end of eval ###
 

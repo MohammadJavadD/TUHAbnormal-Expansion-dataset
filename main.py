@@ -23,9 +23,11 @@ def main():
     parser.add_argument("--ids_to_load_train", default=None, type=int, help="ids to load train, 1-2717")
     parser.add_argument("--ids_to_load_train2", default=None, type=int, help="ids to load train, 1-2171")
     parser.add_argument("--ids_to_load_train3", default=None, type=int, help="ids to load train, 1-2717")
+    parser.add_argument("--ids_to_load_train4", default=None, type=int, help="ids to load train, 1-2171")
     parser.add_argument("--train_folder", default='~/scratch/medical/eeg/tuab/tuab_pp2', type=str, help="data folder")
     parser.add_argument("--train_folder2", default=None, type=str, help="data folder")
     parser.add_argument("--train_folder3", default=None, type=str, help="data folder")
+    parser.add_argument("--train_folder4", default=None, type=str, help="data folder")
 
     # Model related arguments
     parser.add_argument("--model_name", default="TCN", type=str, help="model name")
@@ -90,10 +92,12 @@ def main():
                         train_folder= args.train_folder,
                         train_folder2= args.train_folder2,
                         train_folder3= args.train_folder3,
+                        train_folder4= args.train_folder4,
                         # eval_folder= args.eval_folder,
                         ids_to_load_train =args.ids_to_load_train,
                         ids_to_load_train2 =args.ids_to_load_train2,
                         ids_to_load_train3 =args.ids_to_load_train3,
+                        ids_to_load_train4 =args.ids_to_load_train4,
                         cuda = args.cuda,
                         seed= args.seed,
                         pre_trained = args.pre_trained,
