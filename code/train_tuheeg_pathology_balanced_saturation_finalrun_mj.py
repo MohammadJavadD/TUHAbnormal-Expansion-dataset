@@ -371,6 +371,48 @@ def save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_a
             writer = csv.writer(f)
             writer.writerows(data)
 
+def print_single_ds_performance_groups(clf, test_set):
+    test_set.set_description({
+        "dataset": ['Nmt' if (type(d) == float and np.isnan(d)) else 'Tuh' for d in test_set.description['version']]},overwrite=True)
+
+    test_set_tuh = test_set.split('dataset')['Tuh']
+    test_set_nmt = test_set.split('dataset')['Nmt']
+
+    ## create groups based on gender
+    test_set_nmt_normal = test_set_nmt.split('pathological')['False']
+    test_set_nmt_abnormal = test_set_nmt.split('pathological')['True']
+
+    #here are the groups
+    test_set_nmt_normal_male = test_set_nmt_normal.split('gender')['M']
+    test_set_nmt_normal_female = test_set_nmt_normal.split('gender')['F']
+
+    test_set_nmt_abnormal_male = test_set_nmt_abnormal.split('gender')['M']
+    test_set_nmt_abnormal_female = test_set_nmt_abnormal.split('gender')['F']
+
+    # Define a dictionary to map variable names to their values
+    variables = {
+        'test_set_nmt_normal_male': test_set_nmt_normal_male,
+        'test_set_nmt_normal_female': test_set_nmt_normal_female,
+        'test_set_nmt_abnormal_male': test_set_nmt_abnormal_male,
+        'test_set_nmt_abnormal_female': test_set_nmt_abnormal_female
+    }
+
+    # Evaluate on all groups
+    acc_dict = {}
+    for var_name, test_set in variables.items():
+        test_X = SliceDataset(test_set, idx=0)
+        test_y = test_set.get_metadata().target.to_numpy()
+        y_true = test_y
+        acc = accuracy_score(np.array(y_true), clf.predict(test_X))
+        loss = loss_scoring(clf, test_X, test_y)
+        # print(f'loss_{var_name}:', loss)
+        print(f'Acc_{var_name}:', acc)
+        acc_dict[var_name] = acc
+
+    return acc_dict 
+    
+
+
 def print_single_ds_performance(clf, test_set):
     test_set.set_description({
         "dataset": ['Nmt' if (type(d) == float and np.isnan(d)) else 'Tuh' for d in test_set.description['version']]},overwrite=True)
@@ -466,7 +508,8 @@ def train_TUHEEG_pathology(
                     ids_to_load_train3=None,
                     ids_to_load_train4=None,
                     wandb_run = None,
-                    N_JOBS=8
+                    only_eval = False,
+                    N_JOBS=4
                     ):
 
     ###################################
@@ -495,20 +538,19 @@ def train_TUHEEG_pathology(
     # load from train
     start = time.time()
     # with io.capture_output() as captured:
-    ds_all = load_concat_dataset(train_folder, preload=False,
+    ds_1 = load_concat_dataset(train_folder, preload=False,
                                 # target_name=['pathological','age','gender'] ,#)
                                 # ids_to_load=range(200)
                                 )
     if train_folder2:
         print('loading second train folder')
-        ds_all2 = load_concat_dataset(train_folder2, preload=False,
+        ds_2 = load_concat_dataset(train_folder2, preload=False,
                                 # target_name=['pathological','age','gender'] ,#)
                                 # ids_to_load=range(200)
                                 )
         print('merging datasets')
-        ds_all = BaseConcatDataset([ds_all, ds_all2])
+        ds_all = BaseConcatDataset([ds_1, ds_2])
         # print('ds_all:', ds_all.description)
-    train_set = ds_all.split('train')['True']
     
     ds_all3 = None
     if train_folder3:
@@ -528,7 +570,6 @@ def train_TUHEEG_pathology(
         ds_all4 = 1  
         
 
-
     end = time.time()
 
     print('finished loading preprocessed trainset ' + str(end-start))
@@ -536,6 +577,7 @@ def train_TUHEEG_pathology(
 
     target= target_name
     if target=='pathological':
+        print("target is being set to pathological clf")
         target = ds_all.description['pathological'].astype(int)
         for d, y in zip(ds_all.datasets, target):
             d.description['pathological'] = y
@@ -588,9 +630,8 @@ def train_TUHEEG_pathology(
     start = time.time()
     # with io.capture_output() as captured:
         # test_complete = load_concat_dataset(eval_folder, preload=False, ids_to_load=None)
+    train_set = ds_all.split('train')['True']
     test_complete = ds_all.split('train')['False']
-
-
 
     end = time.time()
 
@@ -605,7 +646,8 @@ def train_TUHEEG_pathology(
     # test_complete.set_description(pd.DataFrame([d.description for d in test_complete.datasets]), overwrite=True)
     
     ## limit training set
-    # print('train_set' , train_set.description)
+    print('train_set:', train_set.description['pathological'].astype(int)[:64])
+
     if train_folder2:
         train_set.set_description({
             "dataset": ['Nmt' if (type(d) == float and np.isnan(d)) else 'Tuh' for d in train_set.description['version']]},overwrite=True)
@@ -822,6 +864,8 @@ def train_TUHEEG_pathology(
 
     print(model_name + ' model sent to cuda')
     print(model)
+
+
     if ds_all4:
         from misc import create_from_mne_epochs
         windows_dataset_Beyond = create_from_mne_epochs(
@@ -883,6 +927,7 @@ def train_TUHEEG_pathology(
                                                             drop_last_window=True,
                                                             # mapping={ False: 0, True: 1 , 'M': 0, 'F': 1 },  # map non-digit targets 'M': 0, 'F': 1,
                                                             )
+
     with io.capture_output() as captured:
          window_train_set = create_fixed_length_windows(train_set, 
                                                         start_offset_samples=0,
@@ -1028,7 +1073,7 @@ def train_TUHEEG_pathology(
         transforms_train = transforms_val
     ## end of data augmentation ##
 
-    # print(window_train_set.get_metadata())
+    # print('targets', window_train_set.get_metadata().target[:64])
     # print('target=',window_train_set.get_metadata().target, 'ds=', window_train_set.get_metadata().dataset)
     
     ## SWA parameters ##
@@ -1117,13 +1162,13 @@ def train_TUHEEG_pathology(
     
     if ds_all3:
         train_split = window_val_set_tueg #test_set_nmt #window_val_set_tueg [Carefull!]
-        iterator_train__shuffle = True
-        iterator_train__sampler = None #ImbalancedDatasetSampler(window_train_set_tueg, labels=window_train_set_tueg.get_metadata().target),#, dataset_label=window_train_set_tueg.get_metadata().dataset),                    
+        iterator_train_shuffle = True
+        iterator_train_sampler = None #ImbalancedDatasetSampler(window_train_set_tueg, labels=window_train_set_tueg.get_metadata().target),#, dataset_label=window_train_set_tueg.get_metadata().dataset),                    
     else:
         train_split = window_val_set
-        iterator_train__sampler = ImbalancedDatasetSampler(window_train_set, labels=window_train_set.get_metadata().target)
-        # iterator_train__sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset),
-        iterator_train__shuffle = False
+        # iterator_train__sampler = ImbalancedDatasetSampler(window_train_set, labels=window_train_set.get_metadata().target)
+        iterator_train_sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset)
+        iterator_train_shuffle = False
 
     clf = EEGClassifier(
                     model,
@@ -1143,8 +1188,8 @@ def train_TUHEEG_pathology(
                     # train_split=predefined_split(window_val_set_tueg),
                     optimizer__lr=lr,
                     optimizer__weight_decay=weight_decay,
-                    iterator_train__shuffle=iterator_train__shuffle,
-                    iterator_train__sampler = iterator_train__sampler,
+                    iterator_train__shuffle=iterator_train_shuffle,
+                    iterator_train__sampler = iterator_train_sampler,
                     # iterator_train__sampler = ImbalancedDatasetSampler(window_train_set, labels=window_train_set.get_metadata().target),
                     # iterator_train__sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset),
                     # iterator_valid__sampler = ImbalancedDatasetSampler_with_ds(window_val_set, labels=window_val_set.get_metadata().target, dataset_label=window_val_set.get_metadata().dataset),
@@ -1177,6 +1222,14 @@ def train_TUHEEG_pathology(
     # if train_folder2:
     b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = print_single_ds_performance(clf, window_test_set)
     save_as_csv(clf, seed, model_name,0, 0, b_acc_merge, b_acc_tuh, b_acc_nmt,write =False)
+
+    if only_eval:
+        # b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt =
+        acc_dict = print_single_ds_performance_groups(clf, window_test_set)
+        wandb_run.log(acc_dict)
+        return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
+
+        # save_as_csv(clf, seed, model_name,0, 0, b_acc_merge, b_acc_tuh, b_acc_nmt,write =False)
     # wandb.run.summary["loss_merge"] = loss_merge
     # wandb.run.summary["loss_tuh"] = loss_tuh
     # wandb.run.summary["loss_nmt"] = loss_nmt

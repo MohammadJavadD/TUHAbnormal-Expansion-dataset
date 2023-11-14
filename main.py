@@ -17,7 +17,8 @@ def main():
     # Project and task related arguments
     parser.add_argument("--project_name", default="APD_revised_CpLoss", type=str, help="project name")
     parser.add_argument("--task_name", default="TUAB_finalrun_", type=str, help="task name")
-    parser.add_argument("--target_name", default="pathology", type=str, help="classification target")
+    parser.add_argument("--target_name", default="pathological", type=str, help="classification target")
+    parser.add_argument("--only_eval", default=False, type=bool, help="only eval or not")
 
     # Training data related arguments
     parser.add_argument("--ids_to_load_train", default=None, type=int, help="ids to load train, 1-2717")
@@ -105,7 +106,8 @@ def main():
                         augment = args.augment,
                         n_tcn_blocks = args.n_tcn_blocks,
                         n_tcn_filters = args.n_tcn_filters,
-                        wandb_run = wandb_run
+                        wandb_run = wandb_run,
+                        only_eval = args.only_eval
                         )
     wandb.run.summary["loss_merge"] = loss_merge
     wandb.run.summary["loss_tuh"] = loss_tuh
