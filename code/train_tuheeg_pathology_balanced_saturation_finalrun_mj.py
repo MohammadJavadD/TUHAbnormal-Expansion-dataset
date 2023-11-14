@@ -379,8 +379,8 @@ def print_single_ds_performance_groups(clf, test_set):
     test_set_nmt = test_set.split('dataset')['Nmt']
 
     ## create groups based on gender
-    test_set_nmt_normal = test_set_nmt.split('pathological')['False']
-    test_set_nmt_abnormal = test_set_nmt.split('pathological')['True']
+    test_set_nmt_normal = test_set_nmt.split('pathological')['0']
+    test_set_nmt_abnormal = test_set_nmt.split('pathological')['1']
 
     #here are the groups
     test_set_nmt_normal_male = test_set_nmt_normal.split('gender')['M']
@@ -646,7 +646,7 @@ def train_TUHEEG_pathology(
     # test_complete.set_description(pd.DataFrame([d.description for d in test_complete.datasets]), overwrite=True)
     
     ## limit training set
-    print('train_set:', train_set.description['pathological'].astype(int)[:64])
+    # print('train_set:', train_set.description['pathological'].astype(int)[:64])
 
     if train_folder2:
         train_set.set_description({
@@ -1264,7 +1264,7 @@ def train_TUHEEG_pathology(
     # if train_folder2:
 
     if ds_all3:
-        print('Evaluating after training on TUAB and NMT train sets')
+        print('Evaluating on TUAB and NMT train sets, after training on TUEG')
         b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = print_single_ds_performance(clf, window_test_set)
         save_as_csv(clf, seed, model_name,ids_to_load_train, ids_to_load_train2, b_acc_merge, b_acc_tuh, b_acc_nmt)
     elif ds_all4:
