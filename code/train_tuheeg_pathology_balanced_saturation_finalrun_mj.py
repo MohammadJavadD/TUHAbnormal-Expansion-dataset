@@ -479,7 +479,68 @@ def print_single_ds_performance_beyond(clf, test_set):
     b_acc_tuh, b_acc_nmt,loss_tuh,loss_nmt = None, None, None, None
 
     return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
+
+def keep_unique (ds):
+    # keep only unique subjects
+    df = ds.description
+
+    subjects = df['subject']
+    unique_subjects = df['subject'].unique()
+    print(f'There are {len(subjects)} subjects in the dataset')
+    print(f'There are {len(unique_subjects)} unique subjects in the dataset')
+
+    # Create a new column 'status' that marks duplicates as 'duplicate' and unique values as 'unique'
+    df['status'] = df.duplicated('subject')
+    df['status'] = df['status'].replace({True: 'duplicate', False: 'unique'})
+
+    ds.set_description(df, overwrite=True)
+
+    # Keep only one record per subject
+    ds = ds.split('status')['unique']
+    return ds
+
+def remove_common (ds):
+    # Remove noisy labbled subjects
+    df = ds.description
+    # Split the dataframe by pathological column
+    groups = df.groupby('gender_bool')
+
+    # Access each group as a dataframe
+    df_yes = groups.get_group(True)
+    df_no = groups.get_group(False)
+
+    # Display the first five rows of each group
+    df_yes.head()
+    df_no.head()
+
+    # Get the unique subjects in each group
+    subjects_yes = set(df_yes['subject'].unique())
+    subjects_no = set(df_no['subject'].unique())
+
+    # Find the intersection of the two sets
+    common_subjects = subjects_yes.intersection(subjects_no)
+
+    # Display the common subjects
+    print(f'there are {len(common_subjects)} common subjects in the two pathological groups')
+
+    # Filter the dataframe by the common subjects
+    df_common = df[df['subject'].isin(common_subjects)]
+
+    # Display the number of rows of the filtered dataframe
+    print(f'There are {len(df_common)} out of {len(df)} rows have their status changed')
+
+    # Create a new column named 'common' with boolean values
+    df = df.assign(common=df['subject'].isin(common_subjects))
+
+    # Display the first five rows of the dataframe
+    # df.head()
+    ds.set_description(df, overwrite=True)
+
+    ds = ds.split('common')['False']
     
+    return ds
+## end of remove noisy labbled subjects
+
 
 def train_TUHEEG_pathology(
                     model_name,
@@ -620,7 +681,10 @@ def train_TUHEEG_pathology(
             x, y = ds_all3[-1]
             print('x:', x.shape)
             print('y:', y)
-        
+
+            ds_all3 = keep_unique(ds_all3)
+            ds_all3 = remove_common(ds_all3)
+            print('ds_all3:', ds_all3.description)
 
         
     # load eval set
@@ -1164,11 +1228,15 @@ def train_TUHEEG_pathology(
         train_split = window_val_set_tueg #test_set_nmt #window_val_set_tueg [Carefull!]
         iterator_train_shuffle = True
         iterator_train_sampler = None #ImbalancedDatasetSampler(window_train_set_tueg, labels=window_train_set_tueg.get_metadata().target),#, dataset_label=window_train_set_tueg.get_metadata().dataset),                    
-    else:
+    elif target_name=='pathological':
         train_split = window_val_set
         # iterator_train__sampler = ImbalancedDatasetSampler(window_train_set, labels=window_train_set.get_metadata().target)
         iterator_train_sampler = ImbalancedDatasetSampler_with_ds(window_train_set, labels=window_train_set.get_metadata().target, dataset_label=window_train_set.get_metadata().dataset)
         iterator_train_shuffle = False
+    else:
+        train_split = window_val_set
+        iterator_train_shuffle = True
+        iterator_train_sampler = None
 
     clf = EEGClassifier(
                     model,
