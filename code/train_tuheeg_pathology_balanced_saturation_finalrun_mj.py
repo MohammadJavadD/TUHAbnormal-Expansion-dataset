@@ -480,6 +480,12 @@ def print_single_ds_performance_beyond(clf, test_set):
 
     return b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt
 
+def keep_ab_normal (ds, split = 'Normal'):
+    if split=='AbNormal':
+        return ds.split('pathological')['True']
+    else:
+        return ds.split('pathological')['False']
+
 def keep_unique (ds):
     # keep only unique subjects
     df = ds.description
@@ -694,6 +700,11 @@ def train_TUHEEG_pathology(
     start = time.time()
     # with io.capture_output() as captured:
         # test_complete = load_concat_dataset(eval_folder, preload=False, ids_to_load=None)
+    only_ab_normal = True
+    if only_ab_normal:
+        ds_all = keep_unique(ds_all)
+        ds_all = remove_common(ds_all)
+        ds_all = keep_ab_normal(ds_all, split='Normal')
     train_set = ds_all.split('train')['True']
     test_complete = ds_all.split('train')['False']
 
