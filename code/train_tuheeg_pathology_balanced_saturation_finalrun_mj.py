@@ -615,6 +615,10 @@ def train_TUHEEG_pathology(
                                 # target_name=['pathological','age','gender'] ,#)
                                 # ids_to_load=range(200)
                                 )
+        # add subject id to ds_2
+        df = ds_2.description
+        df = df.assign(subject=range(len(df)))
+        ds_2.set_description(df, overwrite=True)
         print('merging datasets')
         ds_all = BaseConcatDataset([ds_1, ds_2])
         # print('ds_all:', ds_all.description)
