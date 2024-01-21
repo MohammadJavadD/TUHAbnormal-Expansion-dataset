@@ -1,6 +1,12 @@
 import argparse
+from math import e
 
 import sys
+import os
+# from tempfile import tempdir
+
+# import path
+# from requests import get
 sys.path.insert(0, "./code/")
 
 # from train_tuheeg_pathology_balanced_saturation_finalrun  import * 
@@ -19,6 +25,7 @@ def main():
     parser.add_argument("--task_name", default="TUAB_finalrun_", type=str, help="task name")
     parser.add_argument("--target_name", default="pathological", type=str, help="classification target")
     parser.add_argument("--only_eval", default=False, type=bool, help="only eval or not")
+    parser.add_argument("--wandb_entity", default='your_wandb_entity', type=str, help="wandb entity")
 
     # Training data related arguments
     parser.add_argument("--ids_to_load_train", default=None, type=int, help="ids to load train, 1-2717")
@@ -56,6 +63,16 @@ def main():
     # Parse the arguments
     args = parser.parse_args()
 
+    # convert relative path to absolute path
+    path_list = ['train_folder', 'train_folder2', 'train_folder3', 'train_folder4', 'result_folder', 'load_path']
+    for path_name in path_list:
+        if getattr(args, path_name) is not None:
+            if '$SLURM_TMPDIR' in getattr(args, path_name):
+                # get $SLURM_TMPDIR from environment variable
+                tempdir = os.environ['SLURM_TMPDIR']
+                # replace $SLURM_TMPDIR with tmpdir
+                setattr(args, path_name, getattr(args, path_name).replace('$SLURM_TMPDIR', tempdir))
+                # getattr(args, path_name) = getattr(args, path_name).replace('$SLURM_TMPDIR', tempdir)
 
     if args.use_defualt_parser:
         print("use defualt parser")
@@ -69,6 +86,7 @@ def main():
     # Create a wandb Run
     wandb_run = wandb.init(
         # Set the project where this run will be logged
+        entity=args.wandb_entity,
         project=args.project_name,
         name=args.task_name,
         # Track hyperparameters and run metadata

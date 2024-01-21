@@ -1,0 +1,41 @@
+method: bayes
+metric:
+  goal: minimize
+  name: valid_loss
+parameters:
+  target_name:
+    values:
+      - sex
+  augment:
+    distribution: categorical
+    values:
+      - True
+      - False
+  model_name:
+    distribution: categorical
+    values:
+      - TCN_var
+  seed:
+    values:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+  use_defualt_parser:
+    values:
+      - True
+  n_epochs:
+    values: [35]
+  train_folder:
+    values:  [$SLURM_TMPDIR/tuab_pp3/]
+  train_folder2:
+    values:  [$SLURM_TMPDIR/nmt_pp3/]
+  result_folder:
+    values:  [/home/mila/m/mohammad-javad.darvishi-bayasi/scratch/medical/eeg/results_pp3/]
+program: main.py
+command:
+  - python
+  - ${program}
+  - ${args}
+  - ${args_no_equals}
