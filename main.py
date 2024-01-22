@@ -37,6 +37,16 @@ def main():
     parser.add_argument("--train_folder3", default=None, type=str, help="data folder")
     parser.add_argument("--train_folder4", default=None, type=str, help="data folder")
 
+    # Additional argument
+    parser.add_argument("--train_tueg", default=False, type=bool, help="train on tueg or not")
+
+    
+
+    # Pathology split
+    parser.add_argument("--pathology_split", default="all", choices=["normal", "abnormal", "all"], type=str, help="pathology split")
+    parser.add_argument("--train_on", default="other", choices=["only_TUAB", "only_NMT", "only_TUEG", 'other'], type=str, help="pathology split")
+
+    
     # Model related arguments
     parser.add_argument("--model_name", default="TCN", type=str, help="model name")
     parser.add_argument("--n_tcn_blocks", default=4, type=int, help="number of TCN blocks")
@@ -98,7 +108,7 @@ def main():
     for k, v in vars (args).items ():
         print (f' {k} : {v}')
 
-    b_acc_merge, b_acc_tuh, b_acc_nmt, loss_merge, loss_tuh, loss_nmt = train_TUHEEG_pathology(
+    b_acc_merge, b_acc_tuh, b_acc_nmt,b_acc_tueg, loss_merge, loss_tuh, loss_nmt, loss_tueg = train_TUHEEG_pathology(
                         model_name= args.model_name,
                         task_name = args.task_name,
                         target_name= args.target_name,
@@ -117,6 +127,9 @@ def main():
                         ids_to_load_train2 =args.ids_to_load_train2,
                         ids_to_load_train3 =args.ids_to_load_train3,
                         ids_to_load_train4 =args.ids_to_load_train4,
+                        pathology_split = args.pathology_split,
+                        train_on = args.train_on,
+                        train_tueg = args.train_tueg,
                         cuda = args.cuda,
                         seed= args.seed,
                         pre_trained = args.pre_trained,
@@ -130,9 +143,11 @@ def main():
     wandb.run.summary["loss_merge"] = loss_merge
     wandb.run.summary["loss_tuh"] = loss_tuh
     wandb.run.summary["loss_nmt"] = loss_nmt
+    wandb.run.summary["loss_tueg"] = loss_tueg
     wandb.run.summary["b_acc_merge"] = b_acc_merge
     wandb.run.summary["b_acc_tuh"] = b_acc_tuh
     wandb.run.summary["b_acc_nmt"] = b_acc_nmt
+    wandb.run.summary["b_acc_tueg"] = b_acc_tueg
     
 if __name__ == "__main__":
     main()
